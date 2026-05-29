@@ -1,4 +1,4 @@
-# MEMOS — 长时记忆系统
+# MEMOS — 主动式记忆系统
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)

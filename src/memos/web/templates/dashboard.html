@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MEMOS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="toast-container" id="toast-container"></div>
+
+{% include "_nav.html" %}
+
+<div class="container-fluid py-3">
+    <ul class="nav nav-tabs" id="contentTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="conversation-tab" data-bs-toggle="tab" data-bs-target="#conversation-panel" type="button" role="tab">
+                <i class="bi bi-chat-dots me-1"></i>对话记录
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="knowledge-tab" data-bs-toggle="tab" data-bs-target="#knowledge-panel" type="button" role="tab">
+                <i class="bi bi-database me-1"></i>知识管理
+            </button>
+        </li>
+        <li class="nav-item" role="presentation" id="sug-tab-nav">
+            <button class="nav-link" id="suggestions-tab" data-bs-toggle="tab" data-bs-target="#suggestions-panel" type="button" role="tab">
+                <i class="bi bi-lightbulb me-1"></i>主动建议
+            </button>
+        </li><!-- FIX(NEW-001): 按 F4.1 规格要求，主动建议 Tab 放在今日回顾之前，主动建议是 v0.4.4 核心功能 -->
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="todo-tab" data-bs-toggle="tab" data-bs-target="#todo-panel" type="button" role="tab">
+                <i class="bi bi-check2-square me-1"></i>待办事项
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="daily-review-tab" data-bs-toggle="tab" data-bs-target="#daily-review-panel" type="button" role="tab">
+                <i class="bi bi-calendar-day me-1"></i>今日回顾
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="prompts-tab" data-bs-toggle="tab" data-bs-target="#prompts-panel" type="button" role="tab">
+                <i class="bi bi-pencil-square me-1"></i>提示词管理
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="contentTabsContent">
+        {% include "_conversation_panel.html" %}
+
+        {% include "_knowledge_panel.html" %}
+
+        {% include "_active_suggestions_panel.html" %}
+
+        {% include "_prompts_panel.html" %}
+
+        {% include "_todo_panel.html" %}
+
+        {% include "_daily_review_panel.html" %}
+    </div>
+</div>
+
+
+{% include "_modals.html" %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/dashboard.js?v={{ version }}"></script>
+<script src="/static/js/suggestions.js?v={{ version }}"></script>
+<script src="/static/js/todos.js?v={{ version }}"></script>
+</body>
+</html>

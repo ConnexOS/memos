@@ -1,0 +1,59 @@
+        <!-- ====== 今日回顾 Tab ====== -->
+        <div class="tab-pane fade" id="daily-review-panel" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-2 mt-2 flex-wrap">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <input type="date" class="form-control form-control-sm" id="dr-date" style="width:auto;max-width:180px;">
+                    <select id="dr-project-filter" class="form-select form-select-sm" style="width:auto;max-width:200px;">
+                        <option value="">全部项目</option>
+                    </select>
+                    <select id="dr-endpoint-select" class="form-select form-select-sm" style="width:auto;max-width:200px;">
+                        <option value="">(使用默认端点)</option>
+                    </select>
+                    <select id="dr-prompt-select" class="form-select form-select-sm" style="width:auto;max-width:240px;">
+                        <option value="">(自动选择提示词)</option>
+                    </select>
+                    <button class="btn btn-sm btn-primary" id="dr-generate-btn">
+                        <i class="bi bi-magic me-1"></i>生成报告
+                    </button>
+                    <span id="dr-info" class="small text-secondary"></span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-info" id="dr-preview-btn" disabled>
+                        <i class="bi bi-eye me-1"></i>复制请求
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" id="dr-copy-btn" disabled>
+                        <i class="bi bi-clipboard me-1"></i>复制报告
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" id="dr-save-btn" disabled>
+                        <i class="bi bi-save me-1"></i>保存报告
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" id="dr-regenerate-btn" disabled>
+                        <i class="bi bi-arrow-clockwise me-1"></i>重新生成
+                    </button>
+                    <button class="btn btn-sm btn-outline-warning" id="dr-extract-todos-btn" disabled>
+                        <i class="bi bi-list-check me-1"></i>提取待办
+                    </button>
+                </div>
+            </div>
+            <div id="dr-loading" class="text-center py-5 d-none">
+                <div class="spinner-border text-primary mb-3" role="status" style="width:3rem;height:3rem;">
+                    <span class="visually-hidden">生成中...</span>
+                </div>
+                <div class="fw-semibold">正在生成报告..</div>
+                <div class="small text-secondary mt-1">LLM模型分析对话记录中</div>
+                <div id="dr-loading-timer" class="small text-secondary mt-1" style="font-variant-numeric:tabular-nums;">已等待 0s</div>
+            </div>
+            <div id="dr-empty" class="text-center text-secondary py-5">
+                <i class="bi bi-journal-text" style="font-size:3rem;display:block;margin-bottom:1rem;"></i>
+                <p>选择日期和项目，点击"生成报告"开始</p>
+            </div>
+            <div id="dr-error" class="alert alert-danger small py-2 d-none"></div>
+            <div id="dr-report-container" class="d-none">
+                <div id="dr-report-content" class="border rounded p-3 bg-dark text-light"
+                     style="max-height:70vh;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word;
+                            font-family:var(--bs-font-sans-serif);font-size:.875rem;line-height:1.6;">
+                </div>
+            </div>
+        </div>
+<!-- 注：该面板的 div 开闭经 v0.4.4 已修复（13开/13闭平衡），
+     模态框已移至 _modals.html 共享。 -->

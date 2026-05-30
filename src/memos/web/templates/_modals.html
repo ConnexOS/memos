@@ -1,0 +1,809 @@
+<!-- 备份管理模态框 -->
+<div class="modal fade" id="backupModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-cloud-arrow-up me-1"></i>备份管理</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="small text-secondary" id="backup-modal-info"></span>
+                    <button class="btn btn-sm btn-outline-info" id="backup-modal-trigger-btn" onclick="triggerBackup()">
+                        <i class="bi bi-cloud-arrow-up me-1"></i>立即备份
+                    </button>
+                </div>
+                <div id="backup-modal-loading" class="text-center py-5">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2 small">加载中...</span>
+                </div>
+                <div id="backup-modal-empty" class="text-center text-secondary py-5" style="display:none">
+                    <i class="bi bi-archive" style="font-size:2rem;display:block;margin-bottom:.5rem;"></i>
+                    <p class="small">暂无备份记录</p>
+                </div>
+                <div id="backup-modal-list" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- LLM 端点编辑模态框 -->
+<div class="modal fade" id="endpointModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:480px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="endpointModalTitle">编辑端点</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="ep-original-name">
+                <div class="mb-2">
+                    <label class="form-label small mb-0">名称</label>
+                    <input type="text" class="form-control form-control-sm" id="ep-name" placeholder="如: default, gpt4, deepseek">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-0">API Base URL</label>
+                    <input type="text" class="form-control form-control-sm" id="ep-api-base" placeholder="http://.../v1">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-0">API Key</label>
+                    <div class="d-flex align-items-center gap-1">
+                        <input type="text" class="form-control form-control-sm flex-grow-1" id="ep-api-key" placeholder="留空则不使用">
+                        <i class="bi bi-info-circle" style="font-size:1rem;color:var(--bs-secondary-color);cursor:help;" data-bs-toggle="tooltip" title="留空则不使用"></i>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-0">Model (可选)</label>
+                    <input type="text" class="form-control form-control-sm" id="ep-model" placeholder="如: gpt-4, deepseek-v4-flash">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                <button class="btn btn-primary btn-sm" id="ep-save-btn" onclick="saveLLMEndpoint()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新建提示词模板 模态框 -->
+<div class="modal fade" id="newPromptModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2"><h6 class="modal-title">新建提示词模板</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body py-2">
+                <div class="mb-2">
+                    <label class="form-label small mb-0">端点</label>
+                    <select class="form-select form-select-sm" id="new-prompt-endpoint" onchange="checkEndpointTypeAvailable()">
+                        <option value="">-- 选择端点 --</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-0">模板类型</label>
+                    <select class="form-select form-select-sm" id="new-prompt-type" onchange="checkEndpointTypeAvailable()">
+                        <option value="extract">提炼知识</option>
+                        <option value="daily-review">今日回顾</option>
+                    </select>
+                </div>
+                <div id="new-prompt-warning" class="text-warning small" style="display:none"></div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="new-prompt-create-btn" onclick="createPromptTemplate()">创建</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 设置模态框 -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:1140px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-gear me-1"></i>系统设置</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="settings-body">
+                <div class="text-center text-secondary py-4">加载中...</div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-info me-1" id="settings-wizard-btn">
+                        <i class="bi bi-arrow-repeat"></i> 重新运行设置向导
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-warning" id="settings-reload-btn">
+                        <i class="bi bi-arrow-clockwise"></i> 重新加载
+                    </button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="settings-save-all-btn">
+                        <i class="bi bi-floppy"></i> 保存全部
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+	</div>
+<!-- 建议设置模态框 (v0.4.4 增强版 Phase 1) -->
+<div class="modal fade" id="sugSettingsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-sliders me-1"></i>建议设置</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="sug-settings-body">
+                <div class="text-center text-secondary py-4" id="sug-settings-loading">
+                    <div class="spinner-border spinner-border-sm me-1"></div>加载中...
+                </div>
+                <div id="sug-settings-form" style="display:none">
+                    <!-- 管道一：知识匹配 -->
+                    <h6 class="border-bottom pb-1 mb-3"><span class="badge bg-info bg-opacity-25 text-info me-1">管道一</span>知识匹配型建议</h6>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">推送相似度阈值</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="range" class="form-range flex-grow-1" id="sug-setting-threshold"
+                                   min="0" max="0.95" step="0.05" style="height:6px;">
+                            <span class="badge bg-info bg-opacity-25 text-info sug-setting-value" style="min-width:48px;text-align:center">0.60</span>
+                        </div>
+                        <div class="small text-secondary" id="sug-setting-threshold-preview"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">上下文注入阈值</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="range" class="form-range flex-grow-1" id="sug-setting-context-threshold"
+                                   min="0" max="0.95" step="0.05" style="height:6px;">
+                            <span class="badge bg-info bg-opacity-25 text-info sug-setting-value" style="min-width:48px;text-align:center">0.55</span>
+                        </div>
+                    </div>
+
+                    <div id="sug-setting-threshold-warning" class="text-danger small mb-2" style="display:none">
+                        <i class="bi bi-exclamation-triangle me-1"></i>推送阈值必须 >= 上下文注入阈值
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label small">每日推送上限</label>
+                            <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-max-per-day" min="0" max="100">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">最大待处理数</label>
+                            <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-max-pending" min="10" max="200">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">单次拉取数</label>
+                            <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-display-limit" min="5" max="100">
+                        </div>
+                    </div>
+
+                    <div id="sug-setting-pending-warning" class="text-danger small mb-2" style="display:none">
+                        <i class="bi bi-exclamation-triangle me-1"></i>最大待处理数必须 >= 每日推送上限 × 2
+                    </div>
+
+                    <!-- 管道二：系统状态 -->
+                    <h6 class="border-bottom pb-1 mb-3 mt-4"><span class="badge bg-warning bg-opacity-25 text-warning me-1">管道二</span>系统状态型建议</h6>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="sug-setting-system-enabled">
+                            <label class="form-check-label small" for="sug-setting-system-enabled">启用系统状态型建议</label>
+                        </div>
+                        <div id="sug-setting-system-details">
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-6">
+                                    <label class="form-label small">每日上限</label>
+                                    <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-system-daily-limit" min="0" max="10">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">冷却时间（小时）</label>
+                                    <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-system-cooldown" min="1" max="168">
+                                </div>
+                            </div>
+                            <label class="form-label small mb-1">触发事件</label>
+                            <div class="row g-1">
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-first-time-user" data-trigger="first_time_user">
+                                        <label class="form-check-label small" for="sug-trigger-first-time-user">首次使用提醒</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-unrefined-rounds" data-trigger="unrefined_rounds">
+                                        <label class="form-check-label small" for="sug-trigger-unrefined-rounds">未提炼对话提醒</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-low-quality-ratio" data-trigger="low_quality_ratio">
+                                        <label class="form-check-label small" for="sug-trigger-low-quality-ratio">低质量记忆提醒</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-no-daily-review" data-trigger="no_daily_review">
+                                        <label class="form-check-label small" for="sug-trigger-no-daily-review">缺少日报提醒</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-inactive-project" data-trigger="inactive_project">
+                                        <label class="form-check-label small" for="sug-trigger-inactive-project">项目不活跃提醒</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input sug-setting-trigger" type="checkbox" id="sug-trigger-expired-memories" data-trigger="expired_memories">
+                                        <label class="form-check-label small" for="sug-trigger-expired-memories">过期记忆提醒</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 管道三：手工建议 -->
+                    <h6 class="border-bottom pb-1 mb-3 mt-4"><span class="badge bg-success bg-opacity-25 text-success me-1">管道三</span>手工建议</h6>
+
+                    <div class="mb-3">
+                        <label class="form-label small">每日推送上限</label>
+                        <input type="number" class="form-control form-control-sm sug-setting-number" id="sug-setting-manual-daily-limit" min="0" max="20" style="max-width:200px">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-warning" id="sug-settings-reset-btn">
+                        <i class="bi bi-arrow-counterclockwise"></i> 恢复默认
+                    </button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="sug-settings-save-btn">
+                        <i class="bi bi-floppy"></i> 保存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 创建/编辑手工建议模态框 (v0.4.4 增强版 Phase 3) -->
+<div class="modal fade" id="manualSuggestionModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:520px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="ms-modal-title"><i class="bi bi-plus-circle me-1"></i>创建手工建议</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="ms-edit-id" value="">
+                <!-- 内容 -->
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">建议内容</label>
+                    <textarea class="form-control form-control-sm" id="ms-content" rows="3" placeholder="当关键词触发时推送的建议内容..."></textarea>
+                </div>
+                <!-- 触发模式 -->
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">触发模式</label>
+                    <select class="form-select form-select-sm" id="ms-trigger-mode">
+                        <option value="keyword">关键词匹配（用户消息包含关键词时触发）</option>
+                        <option value="always">始终触发（每次对话均推送）</option>
+                    </select>
+                </div>
+                <!-- 触发关键词（Tag input）—— keyword 模式显示 -->
+                <div class="mb-2" id="ms-keywords-section">
+                    <label class="form-label small fw-bold">触发关键词 <span class="text-secondary">(输入后回车添加)</span></label>
+                    <div class="d-flex flex-wrap gap-1 mb-1" id="ms-keyword-tags"></div>
+                    <input type="text" class="form-control form-control-sm" id="ms-keyword-input" placeholder="输入关键词后回车">
+                    <div class="text-danger small mt-1" id="ms-keyword-error" style="display:none"></div>
+                </div>
+                <!-- always 模式提示 -->
+                <div class="mb-2 text-secondary small" id="ms-always-hint" style="display:none">
+                    <i class="bi bi-info-circle me-1"></i>每次对话均推送此建议，冷却时间可控制推送频率。
+                </div>
+                <!-- 优先级 -->
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">优先级</label>
+                    <select class="form-select form-select-sm" id="ms-priority">
+                        <option value="high">高</option>
+                        <option value="medium" selected>中</option>
+                        <option value="low">低</option>
+                    </select>
+                </div>
+                <!-- 冷却时间 -->
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">冷却时间（分钟）</label>
+                    <input type="number" class="form-control form-control-sm" id="ms-cooldown" value="60" min="0" max="1440">
+                    <div class="text-secondary small mt-1"><i class="bi bi-info-circle me-1"></i>两次推送之间的最小间隔</div>
+                </div>
+                <!-- 有效期 -->
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">有效期（分钟）</label>
+                    <input type="number" class="form-control form-control-sm" id="ms-validity" value="0" min="0" max="43200">
+                    <div class="text-secondary small mt-1"><i class="bi bi-info-circle me-1"></i>0=永不过期，超过后自动失效不再匹配</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="ms-save-btn">
+                    <i class="bi bi-check-lg"></i> 保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑待办模态框 (v0.4.5) -->
+<div class="modal fade" id="todoEditModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:520px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-pencil-square me-1"></i>编辑待办</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">待办内容</label>
+                    <textarea class="form-control form-control-sm" id="todo-edit-content" rows="4" placeholder="输入待办内容..."></textarea>
+                    <div class="text-secondary small mt-1"><i class="bi bi-info-circle me-1"></i>按 Enter 保存，Shift+Enter 换行</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="saveEditTodo()">
+                    <i class="bi bi-check-lg"></i> 保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 创建待办模态框 (v0.4.5) -->
+<div class="modal fade" id="todoCreateModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:520px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-plus-circle me-1"></i>创建待办</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">待办内容</label>
+                    <textarea class="form-control form-control-sm" id="todo-new-content" rows="4" placeholder="输入待办内容..."></textarea>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">优先级</label>
+                    <select class="form-select form-select-sm" id="todo-new-priority">
+                        <option value="high">高优先级</option>
+                        <option value="medium" selected>中优先级</option>
+                        <option value="low">低优先级</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">到期日 <span class="text-secondary">(可选)</span></label>
+                    <input type="date" class="form-control form-control-sm" id="todo-new-duedate">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="todo-create-save-btn">
+                    <i class="bi bi-check-lg"></i> 保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- FIX: 从 _daily_review_panel.html 迁移的共享模态框，被多个面板共享，不应嵌套在面板内部。 -->
+
+<!-- 升级为新版本 模态框 -->
+<div class="modal fade" id="upgradeModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header"><h6 class="modal-title">升级为新版本</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label small">版本号</label>
+                    <input class="form-control form-control-sm" id="upgrade-version" placeholder="1.0.1">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">变更说明</label>
+                    <textarea class="form-control form-control-sm" id="upgrade-changelog" rows="2" placeholder="本次升级的内容..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="upgrade-confirm-btn">确认升级</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 版本对比 模态框 -->
+<div class="modal fade" id="diffModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">版本对比</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex gap-2 mb-2">
+                    <select class="form-select form-select-sm" id="diff-v1-select"></select>
+                    <span class="align-self-center">vs</span>
+                    <select class="form-select form-select-sm" id="diff-v2-select"></select>
+                    <button class="btn btn-sm btn-outline-primary" id="diff-run-btn">对比</button>
+                </div>
+                <pre class="small font-monospace p-2 bg-dark text-light" id="diff-result"
+                    style="max-height:60vh;overflow:auto;white-space:pre-wrap;font-size:.75rem"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- 详情/编辑模态框 -->
+<div class="modal fade" id="detailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">记忆详情</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-id">
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label class="form-label small mb-0">类型</label>
+                        <span class="small" id="detail-score"></span>
+                    </div>
+                    <select id="edit-type" class="form-select form-select-sm mt-1">
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">内容</label>
+                    <textarea class="form-control form-control-sm" id="edit-content" rows="8"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-danger me-auto" id="delete-detail-btn">删除</button>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="save-edit-btn">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加记忆模态框 -->
+<div class="modal fade" id="addModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">添加记忆</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label small">类型</label>
+                    <select id="add-type" class="form-select form-select-sm">
+                        <option value="fact">事实</option>
+                        <option value="decision">决策</option>
+                        <option value="preference">偏好</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">内容</label>
+                    <textarea class="form-control form-control-sm" id="add-content" rows="8"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="add-save-btn">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 提炼审核模态框 -->
+<div class="modal fade" id="extractReviewModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-magic me-1"></i>提炼知识审核</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="small text-secondary mb-2" id="extract-review-info"></div>
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    <span class="small text-secondary">提示词模板:</span>
+                    <select id="extract-prompt-select" class="form-select form-select-sm" style="width:auto;">
+                    </select>
+                    <span class="small text-secondary">LLM 端点:</span>
+                    <select id="extract-endpoint-select" class="form-select form-select-sm" style="width:auto;">
+                    </select>
+                    <button class="btn btn-sm btn-outline-primary" id="extract-retry-btn">
+                        <i class="bi bi-arrow-clockwise"></i> 重新提炼
+                    </button>
+                    <button class="btn btn-sm btn-outline-info" id="extract-copy-msg-btn">
+                        <i class="bi bi-clipboard"></i> 复制消息
+                    </button>
+                </div>
+                <div id="extract-review-list"></div>
+                <div class="mt-2" id="extract-review-empty" style="display:none">
+                    <div class="text-center text-secondary small py-3">暂无知识卡片，点击"重新提炼"重试。</div>
+                </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary" id="extract-select-all-btn">全选</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="extract-deselect-all-btn">取消全选</button>
+                    <button class="btn btn-sm btn-outline-info" id="extract-copy-selected-btn" disabled>
+                        <i class="bi bi-clipboard"></i> 复制选择
+                    </button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="extract-save-btn">
+                        <i class="bi bi-check-lg"></i> 保存 <span id="extract-save-count">0</span> 条
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑知识卡片模态框 -->
+<div class="modal fade" id="extractEditModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">编辑知识卡片</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="extract-edit-index">
+                <div class="mb-2">
+                    <label class="form-label small">类型</label>
+                    <select id="extract-edit-type" class="form-select form-select-sm">
+                        <option value="bug_fix">故障修复 (bug_fix)</option>
+                        <option value="feature_design">功能设计 (feature_design)</option>
+                        <option value="code_optimize">代码优化 (code_optimize)</option>
+                        <option value="tech_knowledge">技术认知 (tech_knowledge)</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">问题</label>
+                    <textarea class="form-control form-control-sm" id="extract-edit-problem" rows="2"></textarea>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">方案</label>
+                    <textarea class="form-control form-control-sm" id="extract-edit-solution" rows="2"></textarea>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">洞察</label>
+                    <textarea class="form-control form-control-sm" id="extract-edit-insight" rows="2"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="extract-edit-save-btn">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 删除确认模态框 -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">确认删除</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body small">
+                确定要删除这条记忆吗？此操作不可撤销。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-sm btn-danger" id="confirm-delete-btn">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 提炼等待模态框（阻断式：禁止背景点击和ESC关闭） -->
+<div class="modal fade" id="extractLoadingModal" tabindex="-1"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 bg-transparent shadow-none">
+            <div class="modal-body text-center py-5">
+                <div class="spinner-border text-light mb-3" role="status" style="width:3rem;height:3rem;">
+                    <span class="visually-hidden">加载中...</span>
+                </div>
+                <div class="text-light fw-semibold" id="extractLoadingText">正在提炼知识卡片...</div>
+                <div class="text-light opacity-75 small mt-1">LLM模型处理中，请耐心等待</div>
+                <div class="text-light small mt-2" id="extractLoadingTimer" style="font-variant-numeric: tabular-nums;">已等待 0s</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 设置向导模态框 -->
+<div class="modal fade" id="setupWizardModal" tabindex="-1"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border-secondary">
+            <div class="modal-header border-secondary">
+                <h6 class="modal-title"><i class="bi bi-rocket-takeoff me-1"></i>欢迎使用 MEMOS</h6>
+                <div class="d-flex align-items-center gap-1" id="wizard-dots"></div>
+            </div>
+            <div class="modal-body" id="wizard-body">
+                <!-- 步骤 0: 系统状态检查 -->
+                <div class="wizard-step" id="wizard-step-0">
+                    <p class="text-secondary small mb-3">让我们花 1 分钟完成初始设置</p>
+                    <div id="wizard-status-cards" class="text-center text-secondary py-3">
+                        <div class="spinner-border spinner-border-sm me-1"></div>正在检查系统状态...
+                    </div>
+                </div>
+                <!-- 步骤 1: LLM 端点配置 -->
+                <div class="wizard-step d-none" id="wizard-step-1">
+                    <p class="text-secondary small mb-3">配置 LLM 端点以启用记忆提炼和今日回顾</p>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">API Base URL</label>
+                        <input class="form-control form-control-sm" id="wiz-api-base" placeholder="http://localhost:11434/v1">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">模型名称 <span class="text-secondary">(可选)</span></label>
+                        <input class="form-control form-control-sm" id="wiz-model" placeholder="如 llama3, qwen2.5, gpt-4">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">API Key <span class="text-secondary">(可选)</span></label>
+                        <input class="form-control form-control-sm" id="wiz-api-key" placeholder="sk-...">
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button class="btn btn-sm btn-outline-info" id="wiz-test-conn-btn">
+                            <i class="bi bi-lightning-charge me-1"></i>测试连接
+                        </button>
+                        <span id="wiz-test-result" class="small"></span>
+                    </div>
+                    <div class="small text-secondary mt-3" id="wiz-existing-endpoints"></div>
+                </div>
+                <!-- 步骤 2: 功能介绍 -->
+                <div class="wizard-step d-none" id="wizard-step-2">
+                    <p class="text-secondary small mb-3">MEMOS 为 AI 编程助手提供跨对话记忆能力</p>
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <div class="card bg-dark border-secondary h-100">
+                                <div class="card-body text-center py-3">
+                                    <i class="bi bi-cpu" style="font-size:2rem;color:var(--bs-info);display:block;margin-bottom:.5rem;"></i>
+                                    <h6 class="card-title small mb-1">自动记忆提炼</h6>
+                                    <p class="card-text small text-secondary">AI 对话中自动提取知识，沉淀为结构化记忆</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-dark border-secondary h-100">
+                                <div class="card-body text-center py-3">
+                                    <i class="bi bi-search" style="font-size:2rem;color:var(--bs-success);display:block;margin-bottom:.5rem;"></i>
+                                    <h6 class="card-title small mb-1">知识检索</h6>
+                                    <p class="card-text small text-secondary">语义搜索历史记忆，新任务自动关联历史上下文</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-dark border-secondary h-100">
+                                <div class="card-body text-center py-3">
+                                    <i class="bi bi-calendar-day" style="font-size:2rem;color:var(--bs-warning);display:block;margin-bottom:.5rem;"></i>
+                                    <h6 class="card-title small mb-1">今日回顾</h6>
+                                    <p class="card-text small text-secondary">一键生成开发日报，总结当日工作成果与技术决策</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary d-flex justify-content-between">
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary" id="wiz-skip-btn">跳过</button>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary d-none" id="wiz-prev-btn">
+                        <i class="bi bi-chevron-left"></i> 上一步
+                    </button>
+                    <button class="btn btn-sm btn-primary" id="wiz-next-btn">
+                        下一步 <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 知识库导入模态框 -->
+<div class="modal fade" id="kb-import-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-upload me-1"></i>导入记忆</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">选择 .jsonl 文件</label>
+                    <input type="file" class="form-control" id="kb-import-file" accept=".jsonl">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">去重策略</label>
+                    <select class="form-select form-select-sm" id="kb-import-strategy">
+                        <option value="skip">跳过相似记忆</option>
+                        <option value="overwrite">覆盖相似记忆</option>
+                        <option value="duplicate">强制新增（不去重）</option>
+                    </select>
+                </div>
+                <div id="kb-import-result" class="d-none">
+                    <div class="small">
+                        <span class="text-success" id="kb-import-imported"></span>
+                        <span class="text-warning ms-2" id="kb-import-skipped"></span>
+                        <span class="text-danger ms-2" id="kb-import-failed"></span>
+                    </div>
+                    <div id="kb-import-errors" class="small text-danger mt-1"></div>
+                </div>
+                <div id="kb-import-loading" class="text-center py-3 d-none">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2 small">导入中...</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-sm btn-primary" id="kb-import-submit">
+                    <i class="bi bi-upload"></i> 开始导入
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 导出模态框 P1-6: 调用后端 /api/memories/export，支持类型和向量配置 -->
+<div class="modal fade" id="kb-export-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-download me-1"></i>导出记忆</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">类型过滤（不选则导出全部）</label>
+                    <div class="d-flex flex-wrap gap-2" id="kb-export-types">
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="fact"> fact</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="decision"> decision</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="preference"> preference</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="bug_fix"> bug_fix</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="feature_design"> feature_design</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="code_optimize"> code_optimize</label>
+                        <label class="form-check form-check-inline small mb-0"><input class="form-check-input export-type-check" type="checkbox" value="tech_knowledge"> tech_knowledge</label>
+                    </div>
+                </div>
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="kb-export-embeddings">
+                    <label class="form-check-label small" for="kb-export-embeddings">包含嵌入向量（文件更大但导入时可复用）</label>
+                </div>
+                <div id="kb-export-loading" class="text-center py-3 d-none">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2 small">导出中...</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-sm btn-success" id="kb-export-submit">
+                    <i class="bi bi-download"></i> 开始导出
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

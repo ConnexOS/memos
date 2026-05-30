@@ -1,0 +1,314 @@
+"""Dashboard API 请求模型 — 所有 Pydantic BaseModel 子类集中管理 (v0.4.3 架构重整)"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, model_validator
+
+from ...config import config
+
+# --- 记忆管理 ---
+
+
+class CreateMemoryRequest(BaseModel):
+    content: str = Field(min_length=1)
+    type: str = "fact"
+    project_id: str | None = None
+
+
+class UpdateMemoryRequest(BaseModel):
+    content: str | None = None
+    type: str | None = None
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str] = Field(min_length=1)
+
+
+class BatchCreateMemoriesRequest(BaseModel):
+    memories: list[CreateMemoryRequest] = Field(min_length=1)
+
+
+class ImportMemoriesRequest(BaseModel):
+    project_id: str | None = None
+    strategy: str = "skip"
+
+
+# --- 检索 ---
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    project_id: str | None = None
+    top_k: int = Field(default=5, ge=1)
+    days_limit: int | None = None
+    type_filter: str | None = None
+    decay_lambda: float | None = None
+    hybrid: bool = False
+    bm25_weight: float | None = None
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        dc = config.dashboard
+        if self.top_k > dc.search_top_k_max:
+            self.top_k = dc.search_top_k_max
+        if self.decay_lambda is None:
+            self.decay_lambda = dc.search_default_decay
+        if self.bm25_weight is None:
+            self.bm25_weight = dc.search_default_bm25_weight
+
+
+# --- 对话记录 & 提炼 ---
+
+
+class ExtractConversationsRequest(BaseModel):
+    ids: list[str] = Field(min_length=1)
+
+
+class ExtractConversationsV2Request(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    prompt_id: str = "default"
+    prompt_version: str | None = None
+    llm_endpoint: str | None = None
+
+
+class CardItem(BaseModel):
+    problem: str = ""
+    solution: str = ""
+    insight: str = ""
+    type: str = "tech_knowledge"
+    quality_score: float | None = None
+    quality_reason: str = ""
+
+
+class BatchCreateCardsRequest(BaseModel):
+    cards: list[CardItem] = Field(min_length=1)
+    project_id: str | None = None
+
+
+# --- 今日回顾 ---
+
+
+class DailyReviewRequest(BaseModel):
+    date: str | None = None
+    project_id: str | None = None
+    llm_endpoint: str | None = None
+    prompt_id: str | None = None
+    prompt_version: str | None = None
+    save_as_memory: bool = False
+
+
+class SaveDailyReviewRequest(BaseModel):
+    report: str = Field(min_length=1)
+    date: str
+
+
+# --- 提示词管理 ---
+
+
+class CreatePromptRequest(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=32)
+    name: str = ""
+    description: str = ""
+    template_type: str = "extract"
+    prompt: str | None = None
+    system_prompt_text: str | None = None
+    user_template: str = "{conversation_text}"
+    chat_style: str = "openai"
+    parameters: dict = {}
+
+
+class UpdatePromptRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    prompt: str | None = None
+    system_prompt_text: str | None = None
+    parameters: dict | None = None
+
+
+class SaveDraftRequest(BaseModel):
+    system_prompt: str | None = None
+
+
+class SaveConfigRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    user_template: str | None = None
+    chat_style: str | None = None
+    parameters: dict | None = None
+
+
+class UpgradeRequest(BaseModel):
+    version: str = Field(min_length=1, max_length=16)
+    changelog: str = ""
+
+
+class RollbackRequest(BaseModel):
+    changelog: str = ""
+
+
+# --- LLM 端点管理 ---
+
+
+class CreateEndpointRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    api_base: str = Field(min_length=1)
+    api_key: str = ""
+    model: str = ""
+
+
+class UpdateEndpointRequest(BaseModel):
+    api_base: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    prompt_templates: dict[str, str] | None = None
+
+
+class ActivateEndpointRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class TestConnectionRequest(BaseModel):
+    endpoint_id: str = Field(min_length=1)
+
+
+# --- 主动建议 ---
+
+
+class SuggestionFeedbackRequest(BaseModel):
+    """建议反馈请求体。"""
+
+    feedback: str = Field(pattern=r"^(useful|not_useful)$", description="反馈类型: useful 或 not_useful")
+
+
+class SuggestionsListRequest(BaseModel):
+    """建议列表查询参数（用于文档/验证）。"""
+
+    project_id: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+    status: str | None = None
+
+
+class DismissAllRequest(BaseModel):
+    """批量关闭请求体。"""
+
+    project_id: str | None = None
+
+
+# --- 会话记录检索 ---
+
+
+class ConversationSearchRequest(BaseModel):
+    """会话记录检索请求。"""
+
+    query: str = Field(min_length=1)
+    project_id: str | None = None
+    top_k: int = Field(default=10, ge=1, le=50)
+    date_from: float | None = None
+    date_to: float | None = None
+
+
+# --- 配置管理 ---
+
+
+class ConfigUpdateRequest(BaseModel):
+    key: str
+    value: str | int | float | bool
+
+
+# --- 主动建议设置 ---
+
+
+class SuggestionSettingsRequest(BaseModel):
+    """建议设置请求体 — 所有字段可选（部分更新）。"""
+
+    # 管道一：知识匹配（MemoryConfig）
+    active_suggestion_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Layer 2 推送相似度阈值",
+    )
+    context_injection_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Layer 1 上下文注入阈值",
+    )
+    suggestion_max_per_day: int | None = Field(
+        default=None,
+        ge=0,
+        description="管道一每日最大推送数",
+    )
+    suggestion_max_pending: int | None = Field(
+        default=None,
+        ge=10,
+        le=200,
+        description="最大待处理建议数",
+    )
+    suggestion_display_limit: int | None = Field(
+        default=None,
+        ge=5,
+        le=100,
+        description="Dashboard 单次拉取建议数",
+    )
+    suggestion_manual_daily_limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description="[已废弃] 管道三每日推送上限",
+    )
+    max_injection_per_round: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="每轮会话最多注入的记录数",
+    )
+
+    # 管道二：系统状态（SystemSuggestionConfig）
+    system_suggestion_enabled: bool | None = Field(
+        default=None,
+        description="管道二全局开关",
+    )
+    system_suggestion_daily_limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description="管道二每日推送上限",
+    )
+    system_suggestion_cooldown_hours: int | None = Field(
+        default=None,
+        ge=1,
+        le=168,
+        description="管道二同类事件冷却时间（小时）",
+    )
+    system_suggestion_triggers: dict | None = Field(
+        default=None,
+        description="管道二各事件独立开关",
+    )
+
+
+class ManualSuggestionCreateRequest(BaseModel):
+    """创建手工建议请求体。"""
+
+    content: str = Field(min_length=1, max_length=5000, description="建议内容")
+    trigger_keywords: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="触发关键词列表（always 模式可为空）",
+    )
+    priority: str = Field(default="medium", pattern=r"^(high|medium|low)$")
+    trigger_mode: str = Field(default="keyword", pattern=r"^(keyword|always)$")
+    cooldown_minutes: int = Field(default=60, ge=0, le=1440)
+    validity_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=43200,
+        description="有效期（分钟），0=永不过期，超过后自动失效不再匹配",
+    )
+
+    @model_validator(mode="after")
+    def _validate_keywords_for_mode(self):
+        if self.trigger_mode == "keyword" and len(self.trigger_keywords) == 0:
+            raise ValueError("keyword 模式下 trigger_keywords 至少需要 1 项")
+        return self

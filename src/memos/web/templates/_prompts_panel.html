@@ -1,0 +1,157 @@
+            <!-- ====== 提示词管理 Tab ====== -->
+        <div class="tab-pane fade" id="prompts-panel" role="tabpanel">
+            <div class="row g-2 mt-2" style="min-height:500px">
+                <!-- 左侧：模板列表 + 模板配置 -->
+                <div class="col-md-4">
+                    <div class="card mb-2">
+                        <div class="card-header py-1 px-2 small d-flex justify-content-between align-items-center">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fw-semibold">模板列表</span>
+                                <select class="form-select form-select-sm" style="width:auto;font-size:.7rem" id="prompt-type-filter" onchange="renderPromptTemplateList()">
+                                    <option value="">全部类型</option>
+                                    <option value="extract">提炼知识</option>
+                                    <option value="daily-review">今日回顾</option>
+                                </select>
+                                <span class="text-secondary" id="prompt-count-text" style="font-size:.75rem">总数: 0</span>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem" onclick="showCreatePromptModal()">
+                                <i class="bi bi-plus-lg"></i> 新建
+                            </button>
+                        </div>
+                        <div class="list-group list-group-flush" id="prompt-template-list" style="max-height:400px;overflow-y:auto">
+                            <div class="text-center text-secondary small py-3">加载中...</div>
+                        </div>
+                    </div>
+                    <!-- 模板配置卡片 -->
+                    <div class="card" id="prompt-config-card" style="display:none">
+                        <div class="card-header py-1 px-2 small d-flex justify-content-between align-items-center">
+                            模板配置
+                            <button class="btn btn-sm btn-outline-primary py-0 px-1" id="prompt-save-config-btn" style="font-size:.7rem">
+                                <i class="bi bi-save"></i> 保存配置
+                            </button>
+                        </div>
+                        <div class="card-body py-2">
+                            <div class="mb-2">
+                                <label class="form-label small mb-0">名称</label>
+                                <input class="form-control form-control-sm" id="prompt-edit-name">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small mb-0">描述</label>
+                                <input class="form-control form-control-sm" id="prompt-edit-desc">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small mb-0">消息格式</label>
+                                <select class="form-select form-select-sm" id="prompt-edit-chatstyle">
+                                    <option value="openai">OpenAI (role/content)</option>
+                                    <option value="chatml">ChatML (&lt;|im_start|&gt;)</option>
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small mb-0">LLM 参数</label>
+                                <div class="mb-1">
+                                    <label class="small text-secondary mb-0 d-flex justify-content-between">
+                                        <span>Temperature</span><span id="prompt-temperature-value">0.10</span>
+                                    </label>
+                                    <input type="range" class="form-range" id="prompt-edit-temperature" min="0" max="2" step="0.01" value="0.1">
+                                </div>
+                                <div class="mb-1">
+                                    <label class="small text-secondary mb-0">Max Tokens</label>
+                                    <input type="number" class="form-control form-control-sm" id="prompt-edit-max-tokens" value="2048" min="1">
+                                </div>
+                                <div class="mb-1">
+                                    <label class="small text-secondary mb-0 d-flex justify-content-between">
+                                        <span>Top P</span><span id="prompt-top-p-value">1.00</span>
+                                    </label>
+                                    <input type="range" class="form-range" id="prompt-edit-top-p" min="0" max="1" step="0.01" value="1.0">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 右侧：版本管理 -->
+                <div class="col-md-8">
+                    <div id="prompt-editor-empty" class="text-center text-secondary py-5">
+                        <i class="bi bi-arrow-left" style="font-size:2rem"></i>
+                        <p class="mt-2">从左侧选择一个模板进行编辑</p>
+                    </div>
+                    <div id="prompt-editor-panel" style="display:none">
+                        <div class="card">
+                            <div class="card-header py-1 px-2 small d-flex justify-content-between align-items-center">
+                                <span>版本管理</span>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="prompt-save-draft-btn" style="font-size:.7rem">
+                                        <i class="bi bi-save"></i> 保存草稿
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info py-0 px-1" id="prompt-sync-to-active-btn" style="font-size:.7rem"
+                                        title="将草稿内容覆盖写入当前活跃版本，无需新建版本号">
+                                        <i class="bi bi-arrow-repeat"></i> 同步至版本
+                                    </button>
+                                    <button class="btn btn-sm btn-primary py-0 px-1" id="prompt-upgrade-btn" style="font-size:.7rem">
+                                        <i class="bi bi-arrow-up-circle"></i> 升级为新版本
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="prompt-diff-btn" style="font-size:.7rem">
+                                        <i class="bi bi-file-diff"></i> 对比
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body py-2">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-0">
+                                        系统提示词 (system_prompt)
+                                        <span class="text-secondary">| 活跃版本: <b id="prompt-active-ver">-</b></span>
+                                        <span class="text-secondary ms-2">草稿状态: <b id="prompt-draft-status">-</b></span>
+                                    </label>
+                                    <textarea class="form-control form-control-sm font-monospace" id="prompt-edit-system"
+                                        rows="48" style="font-size:.8rem;resize:vertical"></textarea>
+                                </div>
+                                <div style="max-height:200px;overflow-y:auto">
+                                    <style>
+#prompt-version-table, #prompt-version-table th, #prompt-version-table td { border-color: #565a5d !important; }
+</style>
+<table class="table table-sm table-bordered small mb-0" id="prompt-version-table">
+                                        <thead><tr><th>版本</th><th>变更说明</th><th>时间</th><th>变更操作</th><th>删除操作</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- ====== v0.4.1 冲突管理弹窗 ====== -->
+        <div class="modal fade" id="conflictModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h6 class="modal-title"><i class="bi bi-exclamation-triangle text-warning me-1"></i>冲突解决 <span id="conflict-modal-count" class="text-muted small"></span></h6>
+                        <button class="btn btn-sm btn-outline-secondary me-2" id="conflict-refresh-btn" title="刷新"><i class="bi bi-arrow-clockwise"></i></button>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="conflict-list">
+                        <div class="text-muted small text-center py-3">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== v0.4.1 趋势图表弹窗 ====== -->
+        <div class="modal fade" id="trendModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h6 class="modal-title"><i class="bi bi-graph-up me-1"></i>近 7 天提炼趋势</h6>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="trend-chart-body">
+                        <div class="v41-trend-legend">
+                            <span><span class="dot bar"></span> LLM 调用次数</span>
+                            <span><span class="dot line"></span> 成功率 (%)</span>
+                        </div>
+                        <div id="trend-chart-container">
+                            <div class="text-muted small text-center py-5">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>

@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memomate"
+version = "0.4.6"
+description = "长时记忆系统（Long-Term Memory System）— 轻量级 RAG 引擎"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "MEMOS Team"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "chromadb>=0.4.22",
+    "sentence-transformers>=2.2.2",
+    "mcp>=1.27.0",
+    "rank-bm25>=0.2.2",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "requests>=2.31",
+    "huggingface-hub>=0.20",
+]
+
+[project.urls]
+Homepage = "https://github.com/laofisher/memos"
+Documentation = "https://github.com/laofisher/memos"
+Source = "https://github.com/laofisher/memos"
+
+[project.scripts]
+memos = "memos.cli:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+memos = ["templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]  # 允许行超长
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["N802", "N803", "N806"]
+
+[tool.ruff.format]
+quote-style = "double"

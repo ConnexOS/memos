@@ -1,0 +1,66 @@
+<nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3">
+    <div class="container-fluid">
+        <a class="navbar-brand mb-0 h6 text-decoration-none" href="/"><i class="bi bi-database-gear me-2"></i>MEMOS</a>
+        <div class="d-flex align-items-center gap-3">
+            <span id="kb-source-badge" style="display:none"></span>
+            <span id="backup-status-text" class="small text-secondary" style="display:none;cursor:pointer" title="点击查看备份管理" onclick="openBackupManager()"></span>
+            <button id="backup-btn" class="btn btn-sm btn-outline-info py-0" title="立即备份" onclick="triggerBackup()">
+                <i class="bi bi-cloud-arrow-up"></i> 备份
+            </button>
+            <span id="status-indicator" class="d-flex align-items-center gap-1 small">
+                <span class="status-dot offline" id="status-dot"></span>
+                <span id="status-text">检测中...</span>
+            </span>
+            <select id="project-selector" class="form-select form-select-sm" style="width:auto;max-width:280px;">
+                <option value="">加载中...</option>
+            </select>
+            <span class="small text-secondary" id="kb-count-label"></span>
+
+            <!-- 通知中心（纯 CSS dropdown） -->
+            <div class="dropdown v42-notif-bell">
+                <a href="#" class="dropdown-toggle text-decoration-none small text-secondary position-relative" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-bell"></i>
+                    {% set total_unread = notifications.unread.total if notifications else 0 %}
+                    {% if total_unread > 0 %}
+                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size:0.6rem;">
+                        {{ total_unread }}
+                    </span>
+                    {% endif %}
+                </a>
+                <div class="dropdown-menu dropdown-menu-end p-2" style="min-width:320px;max-height:400px;overflow-y:auto;">
+                    <div class="d-flex gap-2 mb-2 small">
+                        <span class="badge bg-info bg-opacity-25 text-info">提炼 {{ notifications.unread.extract_complete if notifications else 0 }}</span>
+                        <span class="badge bg-warning bg-opacity-25 text-warning">冲突 {{ notifications.unread.conflict_detected if notifications else 0 }}</span>
+                        <span class="badge bg-danger bg-opacity-25 text-danger">过期 {{ notifications.unread.expiry_alert if notifications else 0 }}</span>
+                    </div>
+                    {% if notifications and notifications.recent %}
+                        {% for n in notifications.recent %}
+                        <div class="dropdown-item small py-1 px-2 rounded {% if not n.read %}fw-bold{% endif %}" style="white-space:normal;">
+                            <div class="d-flex justify-content-between">
+                                <span class="text-{{ 'success' if n.type == 'extract_complete' else 'warning' if n.type == 'conflict_detected' else 'danger' }}">
+                                    {{ '🔔' if n.type == 'extract_complete' else '⚠' if n.type == 'conflict_detected' else '📋' }}
+                                    {{ n.title }}
+                                </span>
+                                <span class="text-muted ms-2" style="font-size:0.7rem;">{{ n._time_ago }}</span>
+                            </div>
+                            <div class="text-muted" style="font-size:0.75rem;">{{ n.message[:80] }}{% if n.message|length > 80 %}...{% endif %}</div>
+                        </div>
+                        {% endfor %}
+                        <div class="dropdown-divider"></div>
+                    {% else %}
+                        <div class="dropdown-item small text-muted">暂无通知</div>
+                        <div class="dropdown-divider"></div>
+                    {% endif %}
+                    <a href="/notifications" class="dropdown-item small text-center text-primary">查看全部通知 →</a>
+                </div>
+            </div>
+
+            <button class="btn btn-sm btn-outline-secondary py-0" id="lang-switch" title="切换语言">
+                <i class="bi bi-translate"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="modal" data-bs-target="#settingsModal" title="设置">
+                <i class="bi bi-gear"></i>
+            </button>
+        </div>
+    </div>
+</nav>

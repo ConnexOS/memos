@@ -1,0 +1,47 @@
+        <div class="tab-pane fade show active" id="conversation-panel" role="tabpanel">
+            <!-- 搜索栏：快捷时间 + 时间范围 + 关键词同行 -->
+            <div class="mb-2 mt-2">
+                <div class="d-flex flex-row gap-1 align-items-center flex-nowrap">
+                    <select class="form-select form-select-sm" id="conv-quick-range" style="width:auto;flex-shrink:0">
+                        <option value="">快捷</option>
+                        <option value="1">前1天</option>
+                        <option value="2">前2天</option>
+                        <option value="5">前5天</option>
+                        <option value="10">前10天</option>
+                        <option value="15">前15天</option>
+                    </select>
+                    <div class="d-flex gap-0 align-items-center small flex-shrink-0" style="white-space:nowrap">
+                        <label class="text-secondary mx-1">从</label>
+                        <input type="date" class="form-control form-control-sm" id="conv-search-date-from" style="width:120px">
+                        <label class="text-secondary mx-1">到</label>
+                        <input type="date" class="form-control form-control-sm" id="conv-search-date-to" style="width:120px">
+                    </div>
+                    <div class="input-group input-group-sm flex-shrink-1" style="min-width:120px">
+                        <input type="text" class="form-control" id="conv-search-query" placeholder="搜索对话记录..." autocomplete="off">
+                        <button class="btn btn-primary" id="conv-search-btn"><i class="bi bi-search"></i></button>
+                        <button class="btn btn-outline-secondary d-none" id="conv-search-back" title="返回对话列表"><i class="bi bi-arrow-left"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 搜索结果区 -->
+            <div id="conv-search-results"></div>
+
+            <!-- 对话列表 -->
+            <div class="d-flex justify-content-between align-items-center mb-2 mt-2" id="conv-info-bar" style="min-height:38px">
+                <div class="small text-secondary" id="conv-info"></div>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-info d-none" id="extract-memory-btn">
+                        <i class="bi bi-magic"></i> 提炼知识 <span id="extract-memory-count" class="badge bg-info">0</span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-success d-none" id="conv-batch-export-btn">
+                        <i class="bi bi-download"></i> 导出选中 <span id="conv-batch-export-count" class="badge bg-success">0</span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger d-none" id="batch-delete-conv-btn">
+                        <i class="bi bi-trash"></i> 删除选中 <span id="batch-delete-conv-count" class="badge bg-danger">0</span>
+                    </button>
+                    <div id="conv-pagination-nav" class="d-flex align-items-center gap-1"></div>
+                </div>
+            </div>
+            <div id="conversation-list"></div>
+        </div>

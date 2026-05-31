@@ -13,6 +13,8 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import memos
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -282,7 +284,7 @@ app.include_router(suggestions_router)
 app.include_router(system_router)
 app.include_router(todos_router)
 
-logger.info("Dashboard 初始化完成（模块化架构 v0.4.3）")
+logger.info("Dashboard 初始化完成（模块化架构 %s）", memos.__version__)
 
 
 def main():

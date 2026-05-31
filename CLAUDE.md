@@ -5,7 +5,7 @@
 ## 项目概述
 
 主动式记忆系统（MemoMate），包名 `memos`。专门为 AI 编程助手打造记忆伙伴，提供跨对话「记忆」能力。
-当前版本 `v0.4.6`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
+当前版本 `v0.4.7`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
 
 ## 技术栈
 

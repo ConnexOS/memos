@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memomate"
-version = "0.4.6"
-description = "长时记忆系统（Long-Term Memory System）— 轻量级 RAG 引擎"
+version = "0.4.7"
+description = "主动式记忆伙伴"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.12"
@@ -48,7 +48,7 @@ test = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-memos = ["templates/*"]
+"memos.web" = ["templates/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

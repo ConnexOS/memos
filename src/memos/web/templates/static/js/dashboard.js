@@ -1239,7 +1239,6 @@ const fieldHelpText = {
     'memory.similarity_threshold': '语义相似度阈值（余弦距离），低于此值判定重复',
     'memory.dedup_top_k': '去重检查的候选记忆数',
     'memory.default_type': '新建记忆的默认类型',
-    'memory.default_project_id': '默认项目 ID，多项目隔离用',
     'memory.archive_days': '超过此天数的记忆自动归档（软删除）',
     'memory.rerank_multiplier': '重排序候选倍数，增大提高质量但降低速度',
     'memory.rerank_min_candidates': '重排序最小候选数，低于此值直接返回',
@@ -1276,7 +1275,6 @@ const fieldHelpText = {
     'notification.rate_limit_minutes': '同类通知最小间隔（分钟），超出合并',
     // Memory（补充）
     'memory.name': '嵌入模型名称，用于显示标识',
-    'memory.light_model_name': '轻量嵌入模型名称（可选），用于快速检索场景',
     'memory.default_top_k': '检索默认返回条数',
     'memory.default_status': '新建记忆默认状态（active/archived）',
     'memory.reuse_weight': '复用频率加成权重（0=禁用）',
@@ -1317,7 +1315,7 @@ const memorySubGroups = {
         label: '嵌入模型',
         desc: '嵌入模型路径、名称与向量维度',
         icon: 'bi-box',
-        fields: ['path', 'name', 'light_model_name', 'vector_dim'],
+        fields: ['path', 'name', 'vector_dim'],
     },
     retrieval: {
         label: '检索',
@@ -1326,7 +1324,7 @@ const memorySubGroups = {
         fields: [
             'decay_lambda', 'default_top_k', 'rerank_multiplier', 'rerank_min_candidates',
             'reuse_weight', 'reuse_decay', 'reuse_boost_cap',
-            'default_type', 'default_project_id', 'default_status',
+            'default_type', 'default_status',
             'quality_threshold',
             'daily_review_chunk_tokens', 'daily_review_chunk_rounds',
         ],
@@ -2564,9 +2562,10 @@ function checkEndpointTypeAvailable() {
     const btn = document.getElementById('new-prompt-create-btn');
     if (!ep) { btn.disabled = true; warn.style.display = 'none'; return; }
 
-    // 模板 ID = 端点@类型，检查是否已存在
+    // 模板 ID = 端点@类型，检查是否已存在真实模板（虚拟条目不阻止新建）
     const templateId = ep + '@' + tp;
-    const exists = _promptTemplates.some(t => t.id === templateId || t.id === ep);
+    const oldFormatId = ep + '-' + tp;
+    const exists = _promptTemplates.some(t => !t.is_virtual && (t.id === templateId || t.id === oldFormatId));
     if (exists) {
         const typeNames = {extract:'提炼知识', 'daily-review':'今日回顾'};
         warn.textContent = `端点 "${ep}" 的"${typeNames[tp]||tp}"模板已存在，不可重复创建`;
@@ -2852,10 +2851,19 @@ document.getElementById('upgrade-confirm-btn')?.addEventListener('click', async 
             // 虚拟模板 → 先创建端点专属模板（含配置），再升级为首版本
             const params = buildLLMParams();
             if (params === null) { btn.disabled = false; return; }
-            await api('/api/prompts', {
+            // 从虚拟 ID ({端点}@{类型}) 提取端点名和类型
+            let epName = _currentPromptId;
+            let tplType = 'extract';
+            if (_currentPromptId.includes('@')) {
+                const parts = _currentPromptId.split('@');
+                epName = parts[0];
+                tplType = parts[1] || 'extract';
+            }
+            const resp = await api('/api/prompts', {
                 method: 'POST',
                 body: JSON.stringify({
-                    endpoint: _currentPromptId,
+                    endpoint: epName,
+                    template_type: tplType,
                     name: document.getElementById('prompt-edit-name').value || _currentPromptId,
                     description: document.getElementById('prompt-edit-desc').value,
                     system_prompt_text: document.getElementById('prompt-edit-system').value,
@@ -2863,12 +2871,14 @@ document.getElementById('upgrade-confirm-btn')?.addEventListener('click', async 
                     parameters: params,
                 }),
             });
-            const result = await api('/api/prompts/' + _currentPromptId + '/upgrade', {
+            const newId = resp.id || (epName + '@' + tplType);
+            const result = await api('/api/prompts/' + newId + '/upgrade', {
                 method: 'POST',
                 body: JSON.stringify({ version, changelog }),
             });
             bootstrap.Modal.getInstance(document.getElementById('upgradeModal')).hide();
             toast('已从默认模板创建并升级为 v' + result.version, 'success');
+            _currentPromptId = newId;
         } else {
             // 真实模板 → 先保存草稿（system_prompt），再升级
             await api('/api/prompts/' + _currentPromptId + '/draft', {

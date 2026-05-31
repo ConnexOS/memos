@@ -312,7 +312,11 @@ def extract_todos_from_review(request: Request, body: dict):
     report_text = (body.get("report_text") or "").strip()
     if not report_text:
         # 兜底：从磁盘文件读取
-        reports_dir = _Path.cwd() / "document" / "日报"
+        import os as _os
+
+        project_dir = body.get("project_dir") or _os.environ.get("CLAUDE_PROJECT_DIR")
+        base = _Path(project_dir) if project_dir else _Path.cwd()
+        reports_dir = base / "document" / "日报"
         candidates = [
             reports_dir / f"{date}-开发日报.md",
             reports_dir / f"{date}-日报.md",

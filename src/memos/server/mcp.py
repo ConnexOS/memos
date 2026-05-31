@@ -78,6 +78,13 @@ def _ensure_initialized():
 
 def _get_memory() -> ContextMemory:
     _ensure_initialized()
+    # v0.4.7: 验证 collection 仍有效（reindex 可能重建了 collection 导致 UUID 变更）
+    try:
+        _memory_instance.store.count()
+    except Exception:
+        logger.warning("ChromaDB collection 连接失效，尝试重建...")
+        _reset_for_test()
+        _ensure_initialized()
     return _memory_instance
 
 
@@ -271,8 +278,13 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
     pid = _get_project_id()
 
     # v0.4.1: 写入前去重，用户直写评分1.0优先覆盖
+    dedup_failed = False
     try:
         similar = mem.recall_with_scores(text, project_id=pid, where={"type": type})
+    except ChromaDBError as e:
+        logger.error("save_knowledge 去重查询因数据库异常失败，降级为直接写入: %s", e)
+        dedup_failed = True
+        similar = []
     except Exception as e:
         logger.warning("save_knowledge 去重查询失败(%s)，降级为直接写入", e)
         similar = []
@@ -319,7 +331,10 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
             if config.memory.conflict_detection_enabled:
                 ext = _get_extractor()
                 ext._detect_conflicts_async(text, mid)
-            return f"已直接保存知识到知识库 (id: {mid[:_id_len]}...)"
+            msg = f"已直接保存知识到知识库 (id: {mid[:_id_len]}...)"
+            if dedup_failed:
+                msg += "（数据库异常，去重检查未完成，建议运行 memos doctor 诊断）"
+            return msg
         return "保存失败"
 
 

@@ -52,20 +52,33 @@ class ChromaDBPersistentStore(VectorStore):
                 anonymized_telemetry=False,
             ),
         )
+        self._client = client
         self._col = client.get_or_create_collection(self._collection_name)
 
     def _col_call(self, method_name, *args, **kwargs):
-        """调用 ChromaDB collection 方法，内部异常统一翻译为 ChromaDBError。"""
-        try:
-            return getattr(self._col, method_name)(*args, **kwargs)
-        except ChromaDBError:
-            raise
-        except Exception as e:
-            msg = str(e).lower()
-            for pattern in self._CHROMA_INTERNAL_ERRORS:
-                if pattern in msg:
-                    raise ChromaDBError(f"ChromaDB 内部异常({method_name}): {e}") from e
-            raise
+        """调用 ChromaDB collection 方法，内部异常统一翻译为 ChromaDBError。
+
+        v0.4.7: 添加指数退避重试（0.2s/0.5s），应对 SQLite 并发冲突导致的
+        ChromaDB 内部索引不一致。最大重试 2 次，仅对 ChromaDBError 类型重试。
+        """
+        import time as _time
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                return getattr(self._col, method_name)(*args, **kwargs)
+            except ChromaDBError:
+                if attempt < max_retries:
+                    logger.warning("ChromaDB 操作重试(%s) %d/%d", method_name, attempt + 1, max_retries)
+                    _time.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+            except Exception as e:
+                msg = str(e).lower()
+                for pattern in self._CHROMA_INTERNAL_ERRORS:
+                    if pattern in msg:
+                        raise ChromaDBError(f"ChromaDB 内部异常({method_name}): {e}") from e
+                raise
 
     def query(self, query_embeddings, n_results, where=None, include=None) -> dict:
         return self._col_call(
@@ -142,6 +155,71 @@ class ChromaDBPersistentStore(VectorStore):
             logger.error("VACUUM 失败: %s", e)
             return False
 
+    def reindex(self) -> dict:
+        """重建向量索引：分批导出全量数据、删除并重建 collection、重新导入。
+        重建后 HNSW 索引从零构建，可修复索引损坏导致的 Error finding id 类错误。
+
+        分批导出（每批 500 条）避免 ChromaDB get() 在大数据量+embedding 时静默截断。
+        返回 {"status": "ok"|"empty"|"error", "count": int, "error": str}
+        """
+        # 分批获取全部数据（ChromaDB get() 在含 embedding 时大数据量可能截断）
+        batch_size = 500
+        all_ids, all_docs, all_metas, all_embs = [], [], [], []
+        offset = 0
+        while True:
+            try:
+                batch = self._col_call(
+                    "get",
+                    limit=batch_size,
+                    offset=offset,
+                    include=["documents", "metadatas", "embeddings"],
+                )
+            except ChromaDBError as e:
+                return {"status": "error", "count": 0, "error": str(e)}
+            ids = batch.get("ids", [])
+            if not ids:
+                break
+            all_ids.extend(ids)
+            all_docs.extend(batch.get("documents", []))
+            all_metas.extend(batch.get("metadatas", []))
+            all_embs.extend(batch.get("embeddings", []))
+            offset += len(ids)
+
+        total = len(all_ids)
+        if total == 0:
+            return {"status": "empty", "count": 0}
+
+        # 删除旧 collection
+        try:
+            self._client.delete_collection(self._collection_name)
+        except Exception as e:
+            return {"status": "error", "count": 0, "error": f"删除集合失败: {e}"}
+
+        # 重建 collection
+        try:
+            self._col = self._client.create_collection(self._collection_name)
+        except Exception as e:
+            return {"status": "error", "count": 0, "error": f"重建集合失败: {e}"}
+
+        # 分批重新导入
+        imported = 0
+        for i in range(0, total, batch_size):
+            batch_end = min(i + batch_size, total)
+            try:
+                self._col_call(
+                    "add",
+                    documents=all_docs[i:batch_end],
+                    embeddings=all_embs[i:batch_end],
+                    metadatas=all_metas[i:batch_end],
+                    ids=all_ids[i:batch_end],
+                )
+                imported += batch_end - i
+            except ChromaDBError as e:
+                logger.error("reindex 导入批次 %d-%d 失败: %s", i, batch_end, e)
+                continue
+
+        return {"status": "ok" if imported == total else "partial", "count": imported, "total": total}
+
 
 class ChromaDBHttpStore(VectorStore):
     # ChromaDB 内部异常关键词，匹配到任一即翻译为 ChromaDBError
@@ -151,20 +229,33 @@ class ChromaDBHttpStore(VectorStore):
         c = config.chroma
         self._collection_name = collection_name or c.collection_name
         client = chromadb.HttpClient(host=c.host, port=c.port)
+        self._client = client
         self._col = client.get_or_create_collection(self._collection_name)
 
     def _col_call(self, method_name, *args, **kwargs):
-        """调用 ChromaDB collection 方法，内部异常统一翻译为 ChromaDBError。"""
-        try:
-            return getattr(self._col, method_name)(*args, **kwargs)
-        except ChromaDBError:
-            raise
-        except Exception as e:
-            msg = str(e).lower()
-            for pattern in self._CHROMA_INTERNAL_ERRORS:
-                if pattern in msg:
-                    raise ChromaDBError(f"ChromaDB 内部异常({method_name}): {e}") from e
-            raise
+        """调用 ChromaDB collection 方法，内部异常统一翻译为 ChromaDBError。
+
+        v0.4.7: 添加指数退避重试（0.2s/0.5s），应对 SQLite 并发冲突导致的
+        ChromaDB 内部索引不一致。最大重试 2 次，仅对 ChromaDBError 类型重试。
+        """
+        import time as _time
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                return getattr(self._col, method_name)(*args, **kwargs)
+            except ChromaDBError:
+                if attempt < max_retries:
+                    logger.warning("ChromaDB 操作重试(%s) %d/%d", method_name, attempt + 1, max_retries)
+                    _time.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+            except Exception as e:
+                msg = str(e).lower()
+                for pattern in self._CHROMA_INTERNAL_ERRORS:
+                    if pattern in msg:
+                        raise ChromaDBError(f"ChromaDB 内部异常({method_name}): {e}") from e
+                raise
 
     def query(self, query_embeddings, n_results, where=None, include=None) -> dict:
         return self._col_call(
@@ -226,6 +317,62 @@ class ChromaDBHttpStore(VectorStore):
         """HTTP 模式不支持本地 VACUUM（需在 ChromaDB Server 端执行）"""
         logger.warning("HTTP 模式不支持客户端 VACUUM，请在 ChromaDB Server 上执行")
         return False
+
+    def reindex(self) -> dict:
+        """重建向量索引（HTTP 模式）。分批导出避免数据截断。"""
+        batch_size = 500
+        all_ids, all_docs, all_metas, all_embs = [], [], [], []
+        offset = 0
+        while True:
+            try:
+                batch = self._col_call(
+                    "get",
+                    limit=batch_size,
+                    offset=offset,
+                    include=["documents", "metadatas", "embeddings"],
+                )
+            except ChromaDBError as e:
+                return {"status": "error", "count": 0, "error": str(e)}
+            ids = batch.get("ids", [])
+            if not ids:
+                break
+            all_ids.extend(ids)
+            all_docs.extend(batch.get("documents", []))
+            all_metas.extend(batch.get("metadatas", []))
+            all_embs.extend(batch.get("embeddings", []))
+            offset += len(ids)
+
+        total = len(all_ids)
+        if total == 0:
+            return {"status": "empty", "count": 0}
+
+        try:
+            self._client.delete_collection(self._collection_name)
+        except Exception as e:
+            return {"status": "error", "count": 0, "error": f"删除集合失败: {e}"}
+
+        try:
+            self._col = self._client.create_collection(self._collection_name)
+        except Exception as e:
+            return {"status": "error", "count": 0, "error": f"重建集合失败: {e}"}
+
+        imported = 0
+        for i in range(0, total, batch_size):
+            batch_end = min(i + batch_size, total)
+            try:
+                self._col_call(
+                    "add",
+                    documents=all_docs[i:batch_end],
+                    embeddings=all_embs[i:batch_end],
+                    metadatas=all_metas[i:batch_end],
+                    ids=all_ids[i:batch_end],
+                )
+                imported += batch_end - i
+            except ChromaDBError as e:
+                logger.error("reindex 导入批次 %d-%d 失败: %s", i, batch_end, e)
+                continue
+
+        return {"status": "ok" if imported == total else "partial", "count": imported, "total": total}
 
 
 def create_store(collection_name: str = None) -> VectorStore:

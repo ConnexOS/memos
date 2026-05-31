@@ -28,7 +28,6 @@ from .models import (
     ServerConfig,
     SuggestionConfig,
     SystemSuggestionConfig,
-    _compute_default_project_id,
     get_memos_home,
 )
 from .prompts import PromptManager
@@ -303,21 +302,6 @@ class MemoConfig(BaseModel):
 
         if file_data:
             backup_config(config_file)
-
-        # 数据迁移：清理 config.json 中遗留的 "default" 占位符
-        if cfg.memory.default_project_id in ("default", ""):
-            _new_pid = _compute_default_project_id()
-            logger.warning("default_project_id 已从 '%s' 迁移到 '%s'", cfg.memory.default_project_id, _new_pid)
-            cfg.memory.default_project_id = _new_pid
-            try:
-                _cf = _get_config_file()
-                if _cf.exists():
-                    _raw = json.loads(_cf.read_text(encoding="utf-8"))
-                    if _raw.get("memory", {}).get("default_project_id", "") in ("default", ""):
-                        _raw.setdefault("memory", {})["default_project_id"] = _new_pid
-                        _cf.write_text(json.dumps(_raw, indent=2, ensure_ascii=False), encoding="utf-8")
-            except Exception:
-                pass
 
         return cfg
 

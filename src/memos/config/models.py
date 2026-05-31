@@ -283,7 +283,6 @@ class ChromaConfig(BaseModel):
 class ModelConfig(BaseModel):
     path: str = Field(default_factory=_default_model_path)
     name: str = "bge-large-zh-v1.5"
-    light_model_name: str = "all-MiniLM-L6-v2"
     vector_dim: int = 1024
     download_retries: int = 3
     download_timeout: int = 600
@@ -490,10 +489,6 @@ class MemoryConfig(BaseModel):
     default_type: str = Field(
         default="fact",
         description="新建记忆的默认类型（fact/decision/preference/todo）",
-    )
-    default_project_id: str = Field(
-        default_factory=_compute_default_project_id,
-        description="【系统自动维护，禁止手动修改】项目路径 MD5，启动时自动计算。",
     )
     archive_days: int = Field(
         default=90,

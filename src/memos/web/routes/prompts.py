@@ -35,7 +35,7 @@ def list_prompts(request: Request):
     endpoint_names = {ep.name for ep in config.llm.endpoints}
     known_types = {"extract", "daily-review"}
     items = []
-    endpoint_has_template = set()
+    endpoint_type_covered = set()
 
     # 1. 列出所有属于已配置端点的真实模板
     for t in pc.templates:
@@ -53,26 +53,29 @@ def list_prompts(request: Request):
         item["has_template"] = True
         item["endpoint_name"] = ep_name
         items.append(item)
-        endpoint_has_template.add(ep_name)
+        endpoint_type_covered.add((ep_name, t.template_type))
 
-    # 2. 对于没有模板的端点，展示虚拟默认条目
+    # 2. 对每个端点的每种类型，缺少模板时生成虚拟默认条目
+    type_names = {"extract": "提炼知识", "daily-review": "今日回顾"}
     for ep in config.llm.endpoints:
-        if ep.name not in endpoint_has_template:
-            items.append(
-                {
-                    "id": ep.name,
-                    "name": ep.name,
-                    "endpoint_name": ep.name,
-                    "template_type": "extract",
-                    "is_virtual": True,
-                    "has_template": False,
-                    "active_version": "-",
-                    "system_prompt_text": "",
-                    "versions": [],
-                    "draft": {},
-                    "version_count": 0,
-                }
-            )
+        for ttype in known_types:
+            if (ep.name, ttype) not in endpoint_type_covered:
+                virtual_id = f"{ep.name}@{ttype}"
+                items.append(
+                    {
+                        "id": virtual_id,
+                        "name": f"{ep.name} ({type_names.get(ttype, ttype)})",
+                        "endpoint_name": ep.name,
+                        "template_type": ttype,
+                        "is_virtual": True,
+                        "has_template": False,
+                        "active_version": "-",
+                        "system_prompt_text": "",
+                        "versions": [],
+                        "draft": {},
+                        "version_count": 0,
+                    }
+                )
 
     return {
         "templates": items,
@@ -85,12 +88,24 @@ def get_prompt(request: Request, id: str):
     """获取单个提示词模板详情（含版本列表）。无真实模板时若为有效端点则返回默认模板托底"""
     t = config.prompt.get(id)
     if not t:
-        if _is_valid_endpoint(id):
-            default_t = config.prompt.get("fallback")
+        # 尝试从 {端点}@{类型} 格式提取端点名和类型
+        ep_name = id
+        template_type = "extract"
+        if "@" in id:
+            parts = id.rsplit("@", 1)
+            known_types = {"extract", "daily-review"}
+            if parts[1] in known_types:
+                ep_name = parts[0]
+                template_type = parts[1]
+        if _is_valid_endpoint(ep_name):
+            # 使用类型对应的缺省回退模板
+            fallback_id = f"fallback@{template_type}"
+            default_t = config.prompt.get(fallback_id) or config.prompt.get("fallback")
             if default_t:
                 result = _template_to_dict(default_t)
                 result["id"] = id
                 result["name"] = id
+                result["template_type"] = template_type
                 result["is_virtual"] = True
                 result["has_template"] = False
                 return result
@@ -110,6 +125,12 @@ def create_prompt(request: Request, req: CreatePromptRequest):
     # 检查新格式 ({endpoint}@{type})、旧新格式 ({endpoint}-{type}) 和旧格式 (仅 {endpoint}) 是否已存在
     if pc.get(template_id):
         raise HTTPException(409, f"端点 '{req.endpoint}' 的'{req.template_type}'类型模板已存在")
+    # 检查旧格式兼容
+    old_dash_id = f"{req.endpoint}-{req.template_type}"
+    if pc.get(old_dash_id):
+        raise HTTPException(409, f"端点 '{req.endpoint}' 的'{req.template_type}'类型模板已存在（旧格式）")
+    if pc.get(req.endpoint):
+        raise HTTPException(409, f"端点 '{req.endpoint}' 已存在旧格式模板")
 
     # 从对应类型的默认模板 fork system_prompt
     default_type_id = {"extract": "default@extract", "daily-review": "default@daily-review"}.get(

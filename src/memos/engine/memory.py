@@ -144,20 +144,17 @@ class ContextMemory:
 
     @staticmethod
     def _build_metadata(metadata: dict = None) -> dict:
+        import hashlib as _hlib
+
         meta = {
             "timestamp": time.time(),
             "type": config.memory.default_type,
-            "project_id": config.memory.default_project_id,
+            "project_id": _hlib.md5(os.getcwd().encode()).hexdigest()[:8],
             "active": True,
             "status": config.memory.default_status,
         }
         if metadata:
             meta.update(metadata)
-        # v0.4.5 防御：project_id 若为 "default" 占位符，自动替换为 CWD 的 MD5
-        if meta.get("project_id", "") in ("default", ""):
-            import hashlib as _hlib
-
-            meta["project_id"] = _hlib.md5(os.getcwd().encode()).hexdigest()[:8]
         return meta
 
     def remember(

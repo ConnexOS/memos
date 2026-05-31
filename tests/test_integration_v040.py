@@ -261,8 +261,6 @@ class TestF2_LightweightModelIntegration:
         d = cfg.model_dump()
         assert d["name"] == "bge-large-zh-v1.5"
         assert d["vector_dim"] == 1024
-        assert d["light_model_name"] == "all-MiniLM-L6-v2"
-
         # MiniLM
         cfg2 = ModelConfig(name="all-MiniLM-L6-v2", vector_dim=384)
         assert cfg2.vector_dim == 384
@@ -295,7 +293,6 @@ class TestF2_LightweightModelIntegration:
         schema = get_config_schema()
         model_props = schema["properties"]["model"]["properties"]
         assert "name" in model_props
-        assert "light_model_name" in model_props
         assert "vector_dim" in model_props
 
 

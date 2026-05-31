@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 # 本模块特有导入
@@ -95,8 +96,36 @@ def search_conversations(request: Request, req: ConversationSearchRequest):
             return_scores=True,
         )
     except ChromaDBError as e:
-        logger.warning("对话搜索 ChromaDB 异常: %s", e)
-        return {"results": [], "total": 0, "error": str(e)}
+        logger.warning("对话搜索 ChromaDB 异常: %s，降级为关键词匹配", e)
+        # v0.4.7: 向量搜索失败时降级为关键词匹配（like 搜索）
+        try:
+            fallback_results = mem.store.get(
+                where=where,
+                limit=req.top_k,
+                include=["documents", "metadatas"],
+            )
+            fallback_items = []
+            for doc_id, doc, meta in zip(
+                fallback_results.get("ids", []),
+                fallback_results.get("documents", []),
+                fallback_results.get("metadatas", []),
+            ):
+                if req.query.lower() in (doc or "").lower():
+                    fallback_items.append(
+                        {
+                            "id": doc_id,
+                            "document": doc,
+                            "metadata": meta,
+                            "similarity": 0,
+                        }
+                    )
+            if fallback_items:
+                results = fallback_items
+            else:
+                return {"results": [], "total": 0, "error": str(e), "fallback": True}
+        except Exception as e2:
+            logger.error("对话搜索降级也失败: %s", e2)
+            return {"results": [], "total": 0, "error": str(e)}
     if not results:
         return {"results": [], "total": 0}
 
@@ -560,9 +589,14 @@ def preview_daily_review(request: Request, req: DailyReviewRequest):
 @router.post("/api/conversations/daily-review/save")
 def save_daily_review(request: Request, req: SaveDailyReviewRequest):
     """保存日报到项目目录 document/日报/ 下"""
-    # 确定保存目录
-    cwd = Path.cwd()
-    daily_dir = cwd / "document" / "日报"
+    # 确定保存目录：优先使用前端传入的项目目录，其次 CLAUDE_PROJECT_DIR，最后 CWD
+    if req.project_dir:
+        base = Path(req.project_dir)
+    elif os.environ.get("CLAUDE_PROJECT_DIR"):
+        base = Path(os.environ["CLAUDE_PROJECT_DIR"])
+    else:
+        base = Path.cwd()
+    daily_dir = base / "document" / "日报"
     daily_dir.mkdir(parents=True, exist_ok=True)
 
     # 文件名：YYYY-MM-DD-开发日报.md
@@ -578,5 +612,5 @@ def save_daily_review(request: Request, req: SaveDailyReviewRequest):
     logger.info("日报已保存 path=%s size=%d", filepath, len(req.report))
     return {
         "message": f"日报已保存到 document/日报/{filename}",
-        "path": str(filepath.relative_to(cwd)),
+        "path": str(filepath.relative_to(base)),
     }

@@ -25,6 +25,13 @@ class VectorStore(ABC):
         """回收已删除文档占用的磁盘空间。返回是否执行了操作。"""
         ...
 
+    @abstractmethod
+    def reindex(self) -> dict:
+        """重建向量索引：导出全量数据、删除并重建 collection、重新导入。
+        返回 {"status": "ok"|"empty"|"error"|"partial", "count": int, "total": int, "error": str}
+        """
+        ...
+
     @property
     def supports_offset(self) -> bool:
         """是否支持 get() 的 offset 参数进行原生分页"""

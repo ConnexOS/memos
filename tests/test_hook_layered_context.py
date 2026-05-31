@@ -42,7 +42,6 @@ class TestBuildLayeredContext:
     @pytest.fixture
     def mock_mem(self):
         mem = MagicMock()
-        mem.config.memory.default_project_id = "default"
         return mem
 
     @pytest.fixture

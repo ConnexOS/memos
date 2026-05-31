@@ -50,7 +50,6 @@ def _make_mem():
     mem = MagicMock()
     mem.store.count.return_value = 0
     mem.store.get.return_value = {"ids": [], "documents": [], "metadatas": []}
-    mem.config.memory.default_project_id = "default"
     return mem
 
 

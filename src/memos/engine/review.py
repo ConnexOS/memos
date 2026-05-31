@@ -5,6 +5,7 @@
 """
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -784,13 +785,21 @@ def _hierarchical_summarize(
     return f"以下为分层摘要结果（共 {len(groups)} 组），请直接生成完整的开发日报：\n\n{merged}"
 
 
+def _detect_project_dir() -> Path:
+    """检测当前项目根目录。优先级：CLAUDE_PROJECT_DIR → CWD。"""
+    env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.cwd()
+
+
 def write_daily_report(report_text: str, target_date: str, output_dir: Path | None = None) -> tuple[Path, bool]:
     """将日报写入文件。已存在时追加「补充」章节。
 
     返回: (文件路径, 是否追加)
     """
     if output_dir is None:
-        output_dir = Path("document/日报")
+        output_dir = _detect_project_dir() / "document" / "日报"
     output_dir.mkdir(parents=True, exist_ok=True)
     file_path = output_dir / f"{target_date}-开发日报.md"
 

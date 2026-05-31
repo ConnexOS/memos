@@ -412,7 +412,7 @@ class InitWizard:
 
         print()
         print("MCP 注册提示（在项目目录下执行）:")
-        print("  claude mcp add --scope user memos -- python -m memos.server")
+        print(f"  claude mcp add --scope user memos -- {sys.executable} -m memos.server")
 
     # ------------------------------------------------------------------
     # 辅助方法

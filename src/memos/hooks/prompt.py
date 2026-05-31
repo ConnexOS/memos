@@ -332,10 +332,10 @@ def _match_manual_suggestions(current_msg: str, mem, pid: str) -> list[dict]:
     documents = results.get("documents", [])
     metadatas = results.get("metadatas", [])
     if not ids:
-        # Fallback: 尝试 default project_id（兼容 Dashboard 创建的记录）
-        from memos.config import config as _cfg
+        # Fallback: 尝试当前 CWD 项目 ID（兼容 Dashboard 创建的记录）
+        import hashlib as _hlib
 
-        default_pid = _cfg.memory.default_project_id
+        default_pid = _hlib.md5(str(PROJECT_DIR).encode()).hexdigest()[:8]
         if default_pid != pid:
             try:
                 results = mem.store.get(

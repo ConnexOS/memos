@@ -13,13 +13,13 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import memos
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
+
+import memos
 
 from ..config import config
 from ..engine.memory import ContextMemory

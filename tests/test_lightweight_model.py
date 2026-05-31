@@ -14,25 +14,11 @@ class TestModelConfig:
         cfg = ModelConfig()
         assert cfg.name == "bge-large-zh-v1.5"
 
-    def test_light_model_name(self):
-        cfg = ModelConfig()
-        assert cfg.light_model_name == "all-MiniLM-L6-v2"
-
-    def test_vector_dim_default(self):
-        cfg = ModelConfig()
-        assert cfg.vector_dim == 1024
-
-    def test_model_name_persists(self):
-        cfg = ModelConfig(name="all-MiniLM-L6-v2", vector_dim=384)
-        assert cfg.name == "all-MiniLM-L6-v2"
-        assert cfg.vector_dim == 384
-
     def test_name_field_in_schema(self):
         """验证 name 字段在 model_dump 中"""
         cfg = ModelConfig()
         d = cfg.model_dump()
         assert "name" in d
-        assert "light_model_name" in d
 
 
 class TestSimilarityThreshold:

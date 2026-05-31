@@ -169,7 +169,7 @@ def list_suggestions(
     ]
 
     # 批量查询源记忆的 reuse_count
-    source_ids = [s["source_memory_id"] for s in items if s.get("source_memory_id")]
+    source_ids = list({s["source_memory_id"] for s in items if s.get("source_memory_id")})
     if source_ids:
         src_results = mem.store.get(ids=source_ids, include=["metadatas"])
         src_reuse = {}

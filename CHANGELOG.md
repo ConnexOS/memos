@@ -1,5 +1,76 @@
 # Changelog
 
+## v0.4.8 "稳健维护" — 2026-05-31
+
+### Added
+
+- **`memos reindex` 命令**
+  - 三阶段：重建向量索引 → 重建 BM25 索引 → VACUUM
+  - 支持 persistent 和 http 两种 ChromaDB 模式
+  - 分批导出（500 条/批 + limit/offset），防止大数据量静默截断
+
+- **ChromaDB 操作级重试机制**
+  - `_col_call()` 指数退避重试（最多 2 次，0.2s/0.5s），覆盖所有 ChromaDB 操作
+  - 解决多进程并发写入导致的 HNSW 索引与 embeddings 数据表不同步问题
+
+### Changed
+
+- **Project ID 设计重构**
+  - 移除 `MemoryConfig.default_project_id` 配置项（运行时无人读取该字段，且所有组件独立计算 `md5(CWD)[:8]`，保留在配置中误导用户）
+  - `engine/memory.py`、`engine/extractor.py`、`hooks/prompt.py` 中的 project_id fallback 改为运行时计算
+  - 前端 Dashboard.js 移除对应配置渲染
+
+### Fixed
+
+- **主动建议面板统计数 80 但列表为空**
+  - 根因：`routes/suggestions.py:172` 收集 `source_memory_id` 时列表推导式未去重，多个建议引用同一源记忆导致 ChromaDB `get()` 抛出 `DuplicateIDError`
+  - 修复：改为集合推导式去重
+
+- **对话搜索降级**
+  - 根因：ChromaDB 并发写致向量索引异常，异常被静默吞掉
+  - 修复：向量搜索报 `ChromaDBError` 时自动降级为关键词 LIKE 搜索
+
+- **`save_knowledge` 异常区分**
+  - 区分 `ChromaDBError`（数据库异常）与一般异常
+  - ChromaDBError 时返回警告提示用户运行 `memos doctor` 诊断
+
+- **提示词模板 Bug 三连修复**
+  - 模板列表默认端点只显示提取模板，不显示今日回顾 → 改为按 `(端点, 类型)` 二元组去重
+  - 虚拟模板"升级为新版本"报 404 → 解析 `ep@type` 格式，创建后用新 ID 发起升级
+  - 新建提示词模板误报"已存在" → 增加 `!t.is_virtual` 过滤
+
+- **安装向导硬编码 `python` 命令**
+  - Windows venv 环境下 `"python"` 解析到全局 Python（缺少 memos 包）
+  - 改为 `sys.executable`，Windows 适配 `SAFETENSORS_FAST_LOAD=0` 环境变量
+
+- **`reindex` 数据完整性**
+  - `get()` 未分批导出导致大数据量静默截断
+  - 改为 500 条/批 + limit/offset 分批导出
+
+- **MCP 作用域冲突**
+  - 移除 user 作用域的 memos MCP 配置，保留 project 作用域
+
+### Removed
+
+- `MemoryConfig.default_project_id` 配置项
+- 清理 8628 个 `test_*` 残留 collection（`memos vacuum --purge-test`），数据库 319MB → 14.5MB
+
+---
+
+## v0.4.7 "修补版" — 2026-05-31
+
+### Fixed
+
+- **PyPI 打包遗漏 web/templates/static 目录**
+  - 根因：`pyproject.toml` 的 `package-data` 中 glob 模式 `templates/*` 不递归，且 key 写错为 `memos` 而非 `"memos.web"`
+  - 修复：key 改为 `"memos.web"`，glob 改为 `templates/**/*`
+
+- **Dashboard 版本号不一致**
+  - Dashboard 启动日志显示"模块化架构 v0.4.3"与当前版本号不一致
+  - 修复：`web/app.py` 中版本号改为从 `memos.__version__` 动态读取
+
+---
+
 ## v0.4.6 "产品化" — 2026-05-30
 
 ### Added

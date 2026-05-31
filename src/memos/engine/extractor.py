@@ -844,9 +844,9 @@ class MemoryExtractor:
         # 降级：LLM 提炼失败时，将原始对话内容直接写入知识库
         logger.info("LLM 提炼返回空，降级为直接写入原始对话内容")
         try:
-            from ..config import config
+            from ..config.models import _compute_default_project_id
 
-            project_id = getattr(self, "_project_id", None) or config.memory.default_project_id
+            project_id = getattr(self, "_project_id", None) or _compute_default_project_id()
             mid = self.memory_system.remember(
                 f"[原始对话记录]\n{merged}",
                 metadata={

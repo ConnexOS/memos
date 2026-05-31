@@ -15,6 +15,7 @@ MEMOS CLI — 安装后的命令行入口。
 import argparse
 import json
 import os
+import platform
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -93,12 +94,16 @@ def cmd_dashboard(args):
 
 def cmd_today(args):
     """基于今日对话记录生成开发日报。"""
+    from pathlib import Path as _Path
+
     from ..engine.memory import ContextMemory
     from ..engine.review import generate_daily_report, write_daily_report
 
     target_date = getattr(args, "date", None)
     project_id = getattr(args, "project_id", None)  # None = 不按项目过滤
     print_only = getattr(args, "print", False)
+    project_dir = getattr(args, "project_dir", None)
+    output_dir = _Path(project_dir) / "document" / "日报" if project_dir else None
 
     print("正在查询对话记录...")
     mem = ContextMemory()
@@ -127,7 +132,7 @@ def cmd_today(args):
                 if print_only:
                     print(report)
                 else:
-                    file_path, is_append = write_daily_report(report, result["date"])
+                    file_path, is_append = write_daily_report(report, result["date"], output_dir)
                     print(f"  日报已保存至: {file_path}")
         else:
             print(f"\n{result['message']}")
@@ -136,7 +141,7 @@ def cmd_today(args):
     if print_only:
         print(f"\n{report}")
     else:
-        file_path, is_append = write_daily_report(report, result["date"])
+        file_path, is_append = write_daily_report(report, result["date"], output_dir)
         action = "追加" if is_append else "保存"
         print(f"  日报已{action}至: {file_path.resolve()}")
 
@@ -405,6 +410,33 @@ def cmd_vacuum(args):
     from ..engine.memory import ContextMemory
 
     mem = ContextMemory()
+
+    # --purge-test: 清理测试残留 collection
+    if getattr(args, "purge_test", False):
+        print("清理测试 collection...")
+        try:
+            import chromadb
+
+            from ..config import config as _cfg
+
+            client = chromadb.PersistentClient(path=_cfg.chroma.path)
+            all_cols = client.list_collections()
+            to_delete = [c for c in all_cols if c.name != "project_memory"]
+            if not to_delete:
+                print("  无测试 collection 需要清理")
+            else:
+                for i, c in enumerate(to_delete):
+                    if c.count() > 0:
+                        print(f"  [!] {c.name}: {c.count()} 条非空数据，跳过")
+                        continue
+                    client.delete_collection(c.name)
+                    if (i + 1) % 500 == 0:
+                        print(f"  已删除 {i + 1}/{len(to_delete)}...")
+                print(f"  [OK] 已删除 {len(to_delete)} 个空测试 collection")
+        except Exception as e:
+            print(f"  [ERROR] 清理失败: {e}")
+            return
+
     stats = mem._get_deleted_stats()
     print(f"总记录: {stats['total']}  |  活跃: {stats['active']}  |  已删除: {stats['deleted']}")
     if stats["deleted"] == 0:
@@ -437,17 +469,47 @@ def cmd_vacuum(args):
 
 
 def cmd_reindex(args):
-    """强制全量重建 BM25 索引（异常恢复用）。v0.4.0 HIGH-1 修复。"""
+    """全量重建向量索引 + BM25 索引（异常恢复用）。
+    v0.4.7: 扩展为重建 ChromaDB HNSW 向量索引（修复 Error finding id 类索引损坏）。
+    """
     from ..engine.memory import ContextMemory
 
     mem = ContextMemory()
-    print("正在重建 BM25 索引...")
+
+    # 阶段一：重建向量索引（ChromaDB HNSW）
+    print("阶段 1/3: 导出全量数据...")
+    result = mem.store.reindex()
+    if result["status"] == "error":
+        print(f"  [ERROR] 向量索引重建失败: {result.get('error')}", file=sys.stderr)
+        sys.exit(1)
+    if result["status"] == "empty":
+        print("  [OK] 数据库为空，无需重建")
+    else:
+        detail = (
+            f"{result['count']} 条"
+            if result["count"] == result.get("total")
+            else f"{result['count']}/{result.get('total')} 条"
+        )
+        print(f"  [OK] 向量索引已重建 ({detail})")
+
+    # 阶段二：重建 BM25 索引
+    print("阶段 2/3: 重建 BM25 索引...")
     mem._invalidate_bm25()
     mem._ensure_bm25_index()
     if mem._bm25 is not None:
-        print(f"[OK] BM25 索引已重建 ({mem._bm25.corpus_size} 篇文档)")
+        print(f"  [OK] BM25 索引已重建 ({mem._bm25.corpus_size} 篇文档)")
     else:
-        print("[OK] BM25 索引已清空（无活跃文档）")
+        print("  [OK] BM25 索引已清空（无活跃文档）")
+
+    # 阶段三：VACUUM 回收空间
+    print("阶段 3/3: 回收磁盘空间...")
+    try:
+        mem.store.vacuum()
+        print("  [OK] 磁盘空间已回收")
+    except Exception as e:
+        print(f"  [!] VACUUM 跳过: {e}")
+
+    print("全部完成。建议运行 memos doctor 验证健康状态。")
 
 
 def cmd_config(args):
@@ -863,14 +925,22 @@ def _get_settings_path(global_mode: bool) -> Path:
 
 
 def _make_hook_config() -> dict:
-    """构建 MEMOS Hook 的 settings.json 片段。"""
+    """构建 MEMOS Hook 的 settings.json 片段。使用 sys.executable 确保走 venv 解释器。"""
+    py = sys.executable
+    if platform.system() == "Windows":
+        # Windows cmd 不支持 KEY=VALUE 前缀，需用 cmd /c + set
+        prompt_cmd = f'cmd /c "set SAFETENSORS_FAST_LOAD=0 && \\"{py}\\" -m memos.hooks.prompt"'
+        stop_cmd = f'cmd /c "set SAFETENSORS_FAST_LOAD=0 && \\"{py}\\" -m memos.hooks.stop"'
+    else:
+        prompt_cmd = f'SAFETENSORS_FAST_LOAD=0 "{py}" -m memos.hooks.prompt'
+        stop_cmd = f'SAFETENSORS_FAST_LOAD=0 "{py}" -m memos.hooks.stop'
     return {
         "UserPromptSubmit": [
             {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "SAFETENSORS_FAST_LOAD=0 python -m memos.hooks.prompt",
+                        "command": prompt_cmd,
                         "timeout": 60,
                     }
                 ]
@@ -881,7 +951,7 @@ def _make_hook_config() -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "SAFETENSORS_FAST_LOAD=0 python -m memos.hooks.stop",
+                        "command": stop_cmd,
                         "timeout": 30,
                     }
                 ]
@@ -1018,6 +1088,11 @@ def main():
     p_today = sub.add_parser("today", help="生成今日开发日报")
     p_today.add_argument("--date", help="指定日期 YYYY-MM-DD（默认今天）")
     p_today.add_argument("--project-id", help="指定项目 ID 过滤")
+    p_today.add_argument(
+        "-D",
+        "--project-dir",
+        help="项目根目录（日报保存到此目录的 document/日报/ 下，默认自动检测 CLAUDE_PROJECT_DIR 或 CWD）",
+    )
     p_today.add_argument("--print", action="store_true", help="仅终端输出，不写入文件")
 
     # status
@@ -1027,10 +1102,11 @@ def main():
     sub.add_parser("doctor", help="诊断系统健康度")
 
     # vacuum
-    sub.add_parser("vacuum", help="回收数据库已删除文档的磁盘空间")
+    p_vacuum = sub.add_parser("vacuum", help="回收数据库已删除文档的磁盘空间")
+    p_vacuum.add_argument("--purge-test", action="store_true", help="清理测试残留的 ChromaDB collection")
 
-    # reindex (v0.4.0 HIGH-1)
-    sub.add_parser("reindex", help="强制全量重建 BM25 索引")
+    # reindex (v0.4.7: 升级为全量重建向量索引 + BM25 索引)
+    sub.add_parser("reindex", help="全量重建向量索引和 BM25 索引（修复索引损坏）")
 
     # config
     p_config = sub.add_parser("config", help="配置管理")

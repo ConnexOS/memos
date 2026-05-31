@@ -18,6 +18,23 @@
 - **🗂️ Multi-Project** — Scoped by working directory, contexts stay separate
 - **⚡ Lightweight** — Local-only, single process, no external services
 
+## Prerequisites
+
+- **Python 3.12+** — [Download](https://www.python.org/downloads/)
+- **pip** — included with Python (verify: `python --version`)
+
+Create and activate a virtual environment (recommended):
+
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
+
+# Linux / macOS
+python3 -m venv venv
+source venv/bin/activate
+```
+
 ## Quick Start
 
 ```bash
@@ -32,11 +49,37 @@ Open http://127.0.0.1:8000
 
 ### Claude Code Integration
 
+MEMOS provides two ways to connect with Claude Code.
+
+**Option 1: Hook (recommended)**
+
+Automatically reads and writes memories during conversations:
+
 ```bash
 memos hook install
 ```
 
-This registers MEMOS as an MCP server. Claude Code will automatically read and write memories during conversations.
+**Option 2: Manual MCP registration**
+
+Register the MCP server in your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memos": {
+      "command": "python",
+      "args": ["-m", "memos.server"],
+      "env": {}
+    }
+  }
+}
+```
+
+Or via Claude Code CLI:
+
+```bash
+claude mcp add --scope project memos -- python -m memos.server
+```
 
 ## Why MEMOS?
 
@@ -96,6 +139,7 @@ memos/
 | `save_knowledge(text, type)` | B | Direct write to store |
 | `recall(query, top_k, ...)` | — | Semantic + hybrid search |
 | `list_memories(type, limit)` | — | Paginate project memories |
+| `create_todo(content, priority, due_date)` | — | Create an action item |
 | `list_todos(status, limit)` | — | List pending action items |
 | `update_todo(id, status)` | — | Change todo status |
 | `delete_memory(memory_id)` | — | Delete by ID |

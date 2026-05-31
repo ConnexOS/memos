@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.6-lightgrey)](https://pypi.org/project/memomate/)
+[![Version](https://img.shields.io/badge/version-0.4.8-lightgrey)](https://pypi.org/project/memomate/)
 
 > 📖 [中文文档](README.zh.md)
 
@@ -11,7 +11,7 @@
 ## Features
 
 - **🧠 Cross-Session Memory** — Captures knowledge from conversations, retrieves it across sessions
-- **🔌 MCP Server** — 11 tools for AI assistant integration (Claude Code, etc.)
+- **🔌 MCP Server** — 12 tools for AI assistant integration (Claude Code, etc.)
 - **🔍 Hybrid Search** — Vector similarity (1024-dim) × BM25 keyword scoring, time-decay ranking
 - **📊 Web Dashboard** — Browse, search, manage memories; visual configuration editor
 - **🏗️ 4 Pipelines** — AI-suggested + direct-write + auto-harvest + manual curation
@@ -57,7 +57,7 @@ graph LR
         A[Claude Code]
     end
     subgraph MEMOS
-        B[MCP Server<br/>11 tools]
+        B[MCP Server<br/>12 tools]
         C[Engine<br/>Retrieval + Extraction]
         D[Vector Store<br/>ChromaDB]
         E[Embedding Model<br/>bge 1024-dim]
@@ -78,7 +78,7 @@ memos/
 │   ├── config/      Pydantic models, loading chain, prompts
 │   ├── storage/     Vector store abstraction (ChromaDB)
 │   ├── engine/      Core: memory CRUD, extraction, review, BM25
-│   ├── server/      MCP server (11 tools, FastMCP stdio)
+│   ├── server/      MCP server (12 tools, FastMCP stdio)
 │   ├── web/         FastAPI + Jinja2 dashboard
 │   ├── cli/         argparse CLI (15+ commands)
 │   ├── features/    Backup, daily review, notifications, wizard

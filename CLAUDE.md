@@ -5,7 +5,7 @@
 ## 项目概述
 
 主动式记忆系统（MemoMate），包名 `memos`。专门为 AI 编程助手打造记忆伙伴，提供跨对话「记忆」能力。
-当前版本 `v0.4.7`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
+当前版本 `v0.4.8`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
 
 ## 技术栈
 
@@ -22,7 +22,7 @@ LLM 多端点支持，OpenAI chat/completions 格式。混合检索：rank_bm25 
 - **C**: Hook 自动采集对话 → ChromaDB (user_input / assistant_output)
 - **D**: Dashboard 人工选对话 → LLM 提炼 → 知识卡片
 
-知识类型：A+B 用 `fact`/`decision`/`preference`/`todo`，D 用 `bug_fix`/`feature_design`/`code_optimize`/`tech_knowledge`
+知识类型（共 7 种）：A+B 管线用 `fact`/`decision`/`preference`，D 管线用 `bug_fix`/`feature_design`/`code_optimize`/`tech_knowledge`。`todo` 已从知识类型中移除，待办请用 `create_todo` MCP 工具。
 
 ### 模块职责
 
@@ -30,7 +30,7 @@ LLM 多端点支持，OpenAI chat/completions 格式。混合检索：rank_bm25 
 |------|------|------|
 | 存储引擎 | `storage/` | ChromaDB + SentenceTransformer，CRUD + 混合检索 + 时间衰减 |
 | 提炼引擎 | `engine/extractor.py` | 缓冲管理（5轮触发），LLM 调用 + JSON 三级回退 + 去重 |
-| MCP Server | `server/mcp.py` | FastMCP，11 工具 |
+| MCP Server | `server/mcp.py` | FastMCP，12 工具（含 create_todo） |
 | Web 仪表板 | `web/` | FastAPI + Jinja2，routes/models/services 三层 |
 | 配置系统 | `config/` | models.py(10子配置) + prompts.py + loader.py |
 | 辅助功能 | `features/` | backup + daily_review + usage + notifications + wizard |
@@ -69,10 +69,10 @@ D:/DevSpace/MEMOS/
 
 ## 记忆行为准则（始终生效）
 
-- **自动记住**: 遇到技术决策、项目约定、用户偏好、待办事项时，调 `remember(text, metadata)`，metadata.type 四选一 `fact`/`decision`/`preference`/`todo`。不记：寒暄、临时调试、常识、用户说"不用记"。
+- **自动记住**: 遇到技术决策、项目约定、用户偏好时，调 `remember(text, metadata)` 或 `save_knowledge(text, type)`，metadata.type 支持 7 种：`fact`/`decision`/`preference`/`bug_fix`/`feature_design`/`code_optimize`/`tech_knowledge`。不记：寒暄、临时调试、常识、用户说"不用记"。
+- **创建待办**: 需要跟踪的待办事项，调 `create_todo(content, priority, due_date)`。
 - **检索先于决策**: 开始新任务或做技术选型前，先 `recall(query)` 检索历史记忆。
 - **记录对话轮次**: 重要讨论结束后调 `log_complete_turn(user_message, assistant_message)` 存档。
-- **类型红线**: 禁止使用 `bug_fix`/`feature_design`/`code_optimize`/`tech_knowledge`（Dashboard 专用）。
 
 ## 关键约定
 
@@ -109,7 +109,7 @@ D:/DevSpace/MEMOS/
 
 | 文档 | 内容 | 路径 |
 |------|------|------|
-| MCP 工具详情 | 11 个工具参数 + 管线说明 | `docs/mcp-tools.md` |
+| MCP 工具详情 | 12 个工具参数 + 管线说明 | `docs/mcp-tools.md` |
 | CLI 命令参考 | 完整命令行参考 | `docs/cli-commands.md` |
 | API 端点参考 | Dashboard 全部 API | `docs/api-reference.md` |
 | 测试基础设施 | 分组 + Fixture + 模式 | `docs/test-infrastructure.md` |

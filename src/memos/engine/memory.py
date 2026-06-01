@@ -297,6 +297,7 @@ class ContextMemory:
         project_id: str = None,
         type_filter: str | list[str] = None,
         include_archived: bool = False,
+        exclude_types: list[str] = None,
     ):
         """统一构建 ChromaDB where 条件，所有查询路径复用。
         v0.4.4 P1-3: 合并 _build_where/list_memories/count_memories 三处重复逻辑。
@@ -318,6 +319,8 @@ class ContextMemory:
                 clauses["type"] = {"$in": type_filter}
             else:
                 clauses["type"] = type_filter
+        if exclude_types:
+            and_items.append({"type": {"$nin": exclude_types}})
         if not include_archived:
             clauses["active"] = {"$ne": False}
         if not clauses and not and_items:
@@ -523,6 +526,7 @@ class ContextMemory:
         offset: int = 0,
         include_archived: bool = False,
         where: dict = None,  # v0.4.1: 附加 ChromaDB where 过滤条件
+        exclude_types: list[str] = None,  # v0.4.8: 排除指定类型
     ) -> list[dict]:
         if limit is None:
             limit = config.dashboard.list_default_limit
@@ -532,6 +536,7 @@ class ContextMemory:
             project_id=project_id,
             type_filter=type_filter,
             include_archived=include_archived,
+            exclude_types=exclude_types,
         )
 
         # v0.4.4 P2-7: 合并 supports_offset 两分支——当前均全量拉取后内存分页，逻辑一致

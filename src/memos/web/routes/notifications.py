@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...config import config
 from ..app import templates
+from ..dependencies import get_project_id
 
 # 本模块特有导入
 from ..auth import verify_session_token
@@ -83,7 +84,11 @@ def _check_expiry_notify(request: Request):
 
 
 @router.post("/api/notifications/{notif_id}/read")
-def mark_notification_read(request: Request, notif_id: str):
+def mark_notification_read(
+    request: Request,
+    notif_id: str,
+    project_id: str = Depends(get_project_id),  # P0-3: 预留 project_id，保持 API 契约一致
+):
     from ...features.notifications import get_notification_logger
 
     notifier = get_notification_logger()
@@ -97,7 +102,11 @@ def mark_notification_read(request: Request, notif_id: str):
 
 
 @router.post("/api/notifications/{notif_id}/dismiss")
-def dismiss_notification(request: Request, notif_id: str):
+def dismiss_notification(
+    request: Request,
+    notif_id: str,
+    project_id: str = Depends(get_project_id),  # P0-3: 预留 project_id，保持 API 契约一致
+):
     from ...features.notifications import get_notification_logger
 
     notifier = get_notification_logger()
@@ -118,7 +127,10 @@ def unread_notification_count(request: Request):
 
 
 @router.post("/api/notifications/renew-all-expired")
-def renew_all_expired(request: Request):
+def renew_all_expired(
+    request: Request,
+    project_id: str = Depends(get_project_id),  # P0-1: 新增 project_id，防止跨项目泄漏
+):
     """续期所有已过期/即将过期的记忆。"""
     mem = request.app.state.mem
     expiry = mem.get_expiry_status()
@@ -136,6 +148,7 @@ def renew_all_expired(request: Request):
                     {"timestamp": {"$gte": now - archive_sec}},
                     {"timestamp": {"$lt": now - archive_sec + warn_sec}},
                     {"active": {"$ne": False}},
+                    {"project_id": project_id},  # P0-1: 限定当前项目
                 ]
             },
             include=["metadatas"],
@@ -149,7 +162,13 @@ def renew_all_expired(request: Request):
     if expiry.get("expired", 0) > 0:
         expired_cutoff = time.time() - config.memory.archive_days * 86400
         records = mem.store.get(
-            where={"$and": [{"timestamp": {"$lt": expired_cutoff}}, {"active": {"$ne": False}}]},
+            where={
+                "$and": [
+                    {"timestamp": {"$lt": expired_cutoff}},
+                    {"active": {"$ne": False}},
+                    {"project_id": project_id},  # P0-1: 限定当前项目
+                ]
+            },
             include=["metadatas"],
         )
         for mid in records.get("ids", []):

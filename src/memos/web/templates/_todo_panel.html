@@ -24,9 +24,14 @@
                                     <label class="form-check-label small" for="todo-show-archived">显示已归档</label>
                                 </div>
                             </div>
-                            <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="showCreateTodoModal()" style="font-size:.8rem">
-                                <i class="bi bi-plus-lg"></i> 新建待办
-                            </button>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" id="todo-refresh-btn" style="font-size:.8rem" title="刷新待办">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="showCreateTodoModal()" style="font-size:.8rem">
+                                    <i class="bi bi-plus-lg"></i> 新建待办
+                                </button>
+                            </div>
                         </div>
                         <!-- 待办列表 -->
                         <div id="todo-list">

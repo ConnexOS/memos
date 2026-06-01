@@ -72,7 +72,7 @@ async function loadSuggestions(filter) {
         url += '&suggestion_types=active_push,system_alert,manual_trigger';
     }
     try {
-        var data = await api(url, { method: 'GET' });
+        var data = await apiClient.request(url, { method: 'GET' });
         renderSuggestions(data.items || []);
         if (filter === 'pending') {
             fetchCount();
@@ -95,7 +95,7 @@ async function loadSuggestions(filter) {
 
 async function loadManualList() {
     try {
-        var data = await api('/api/manual-suggestions', { method: 'GET' });
+        var data = await apiClient.request('/api/manual-suggestions', { method: 'GET' });
         renderManualList(data.items || []);
     } catch (e) {
         var container = document.getElementById('sug-list');
@@ -143,7 +143,7 @@ function maybeStartPolling() {
 
 async function fetchCount() {
     try {
-        var data = await api('/api/suggestions/count', { method: 'GET' });
+        var data = await apiClient.request('/api/suggestions/count', { method: 'GET' });
         currentCount = data.count || 0;
         updateBadge();
     } catch (e) {}
@@ -151,7 +151,7 @@ async function fetchCount() {
 
 async function fetchStats() {
     try {
-        var data = await api('/api/suggestions/stats?days=7', { method: 'GET' });
+        var data = await apiClient.request('/api/suggestions/stats?days=7', { method: 'GET' });
         renderStats(data);
     } catch (e) {}
 }
@@ -159,19 +159,19 @@ async function fetchStats() {
 async function loadStatCounts() {
     // 同时获取五个视图的计数
     try {
-        var pendingData = await api('/api/suggestions?status=pending&limit=1', { method: 'GET' });
+        var pendingData = await apiClient.request('/api/suggestions?status=pending&limit=1', { method: 'GET' });
         document.getElementById('sug-stat-pending').textContent = pendingData.total || 0;
     } catch(e) {}
     try {
-        var processedData = await api('/api/suggestions?status=reacted&limit=1', { method: 'GET' });
+        var processedData = await apiClient.request('/api/suggestions?status=reacted&limit=1', { method: 'GET' });
         document.getElementById('sug-stat-processed').textContent = processedData.total || 0;
     } catch(e) {}
     try {
-        var manualData = await api('/api/manual-suggestions', { method: 'GET' });
+        var manualData = await apiClient.request('/api/manual-suggestions', { method: 'GET' });
         document.getElementById('sug-stat-manual').textContent = manualData.total || 0;
     } catch(e) {}
     try {
-        var historyData = await api('/api/suggestions?status=dismissed&limit=1&suggestion_types=active_push,system_alert,manual_trigger', { method: 'GET' });
+        var historyData = await apiClient.request('/api/suggestions?status=dismissed&limit=1&suggestion_types=active_push,system_alert,manual_trigger', { method: 'GET' });
         document.getElementById('sug-stat-history').textContent = historyData.total || 0;
     } catch(e) {}
     loadInjectionStatCount();
@@ -179,7 +179,7 @@ async function loadStatCounts() {
 
 async function fetchNoSuggestionsStatus() {
     try {
-        var data = await api('/api/suggestions/no-suggestions-status', { method: 'GET' });
+        var data = await apiClient.request('/api/suggestions/no-suggestions-status', { method: 'GET' });
         var toggle = document.getElementById('sug-pause-toggle');
         if (toggle) toggle.checked = data.enabled === true;
     } catch (e) {}
@@ -347,7 +347,7 @@ function createCard(item) {
 // --- 操作 ---
 async function handleFeedback(id, feedback, card) {
     try {
-        await api('/api/suggestions/' + id + '/feedback', {
+        await apiClient.request('/api/suggestions/' + id + '/feedback', {
             method: 'POST',
             body: JSON.stringify({ feedback: feedback }),
         });
@@ -368,7 +368,7 @@ async function handleFeedback(id, feedback, card) {
 
 async function handleDismiss(id, card) {
     try {
-        await api('/api/suggestions/' + id + '/dismiss', { method: 'POST' });
+        await apiClient.request('/api/suggestions/' + id + '/dismiss', { method: 'POST' });
         card.style.transition = 'all 0.3s ease';
         card.style.transform = 'translateX(100%)';
         card.style.opacity = '0';
@@ -381,7 +381,7 @@ async function handleDismiss(id, card) {
 async function handleDismissAll() {
     if (!confirm('确定将所有待处理建议标记为已读？')) return;
     try {
-        await api('/api/suggestions/dismiss-all', { method: 'POST' });
+        await apiClient.request('/api/suggestions/dismiss-all', { method: 'POST' });
         document.querySelectorAll('.sug-card.pending').forEach(function(card) {
             card.style.transition = 'all 0.3s ease';
             card.style.transform = 'translateX(100%)';
@@ -403,7 +403,7 @@ async function handleDismissAll() {
 async function handleClearHistory() {
     if (!confirm('确定永久删除所有历史建议？删除后不可恢复。')) return;
     try {
-        var resp = await api('/api/suggestions/history', { method: 'DELETE' });
+        var resp = await apiClient.request('/api/suggestions/history', { method: 'DELETE' });
         var count = resp.deleted || 0;
         document.querySelectorAll('.sug-card.dismissed, .sug-card.history').forEach(function(card) {
             card.style.transition = 'all 0.3s ease';
@@ -423,7 +423,7 @@ async function handleClearHistory() {
 
 async function handleRestore(id, card) {
     try {
-        var resp = await api('/api/suggestions/' + id + '/restore', { method: 'POST' });
+        var resp = await apiClient.request('/api/suggestions/' + id + '/restore', { method: 'POST' });
         card.style.transition = 'all 0.3s ease';
         card.style.transform = 'translateX(100%)';
         card.style.opacity = '0';
@@ -442,7 +442,7 @@ async function handleRestore(id, card) {
 async function handleHardDelete(id, card) {
     if (!confirm('确定要永久删除此建议记录？')) return;
     try {
-        await api('/api/suggestions/' + id, { method: 'DELETE' });
+        await apiClient.request('/api/suggestions/' + id, { method: 'DELETE' });
         card.style.transition = 'all 0.3s ease';
         card.style.transform = 'translateX(100%)';
         card.style.opacity = '0';
@@ -457,7 +457,7 @@ async function togglePause() {
     const toggle = document.getElementById('sug-pause-toggle');
     const wasEnabled = toggle.checked;
     try {
-        const data = await api('/api/suggestions/toggle-pause', { method: 'POST' });
+        const data = await apiClient.request('/api/suggestions/toggle-pause', { method: 'POST' });
         toggle.checked = data.enabled === true;
         toast(data.enabled ? '已暂停推送' : '已恢复推送', data.enabled ? 'warning' : 'success');
     } catch (e) {
@@ -545,9 +545,9 @@ function renderManualList(items) {
 
 window.toggleManualSuggestion = async function(id, checkbox) {
     try {
-        var result = await api('/api/manual-suggestions/' + id + '/toggle-disable', { method: 'PUT' });
+        var result = await apiClient.request('/api/manual-suggestions/' + id + '/toggle-disable', { method: 'PUT' });
         // 刷新列表保持状态一致
-        var data = await api('/api/manual-suggestions', { method: 'GET' });
+        var data = await apiClient.request('/api/manual-suggestions', { method: 'GET' });
         renderManualList(data.items || []);
     } catch (e) {
         toast('切换失败: ' + (e.message || e), 'danger');
@@ -595,7 +595,7 @@ async function loadInjectionList() {
     container.innerHTML = '<div class="text-center text-secondary small py-5"><div class="spinner-border spinner-border-sm me-1"></div>加载注入监控...</div>';
 
     try {
-        var data = await api('/api/suggestions/injection-stats?window_hours=24', { method: 'GET' });
+        var data = await apiClient.request('/api/suggestions/injection-stats?window_hours=24', { method: 'GET' });
         _injectionData = data;
         renderInjectionMonitor(container, data);
     } catch (e) {
@@ -605,7 +605,7 @@ async function loadInjectionList() {
 
 async function loadInjectionStatCount() {
     try {
-        var data = await api('/api/suggestions/injection-stats?window_hours=24', { method: 'GET' });
+        var data = await apiClient.request('/api/suggestions/injection-stats?window_hours=24', { method: 'GET' });
         var count = (data.recent_injections || []).length;
         var el = document.getElementById('sug-stat-injection');
         if (el) el.textContent = count;
@@ -879,7 +879,7 @@ async function fetchPreview() {
     if (!previewEl) return;
     previewEl.textContent = '计算中...';
     try {
-        const data = await api('/api/suggestions/preview?threshold=' + threshold, { method: 'GET' });
+        const data = await apiClient.request('/api/suggestions/preview?threshold=' + threshold, { method: 'GET' });
         previewEl.textContent = '阈值 ' + threshold.toFixed(2) + ' 下，预计 ' + data.above_threshold + ' / ' + data.total_knowledge + ' 条记忆匹配';
     } catch (e) {
         previewEl.textContent = '预览计算失败';
@@ -896,7 +896,7 @@ async function openSettingsModal() {
     modal.show();
 
     try {
-        const data = await api('/api/settings/suggestions', { method: 'GET' });
+        const data = await apiClient.request('/api/settings/suggestions', { method: 'GET' });
         settingsFields = data.fields || {};
         populateSettingsForm(settingsFields);
         if (form) form.style.display = '';
@@ -1003,7 +1003,7 @@ async function saveSettings() {
     });
 
     try {
-        const data = await api('/api/settings/suggestions', {
+        const data = await apiClient.request('/api/settings/suggestions', {
             method: 'PUT',
             body: JSON.stringify(body),
         });
@@ -1029,7 +1029,7 @@ async function resetSettings() {
     }
 
     try {
-        const data = await api('/api/settings/suggestions/reset', { method: 'POST' });
+        const data = await apiClient.request('/api/settings/suggestions/reset', { method: 'POST' });
         settingsFields = data.fields || {};
         populateSettingsForm(settingsFields);
         toast('已恢复默认设置', 'success');
@@ -1186,10 +1186,10 @@ async function saveManualSuggestion() {
 
     try {
         if (isEdit) {
-            await api('/api/manual-suggestions/' + editId, { method: 'PUT', body: JSON.stringify(body) });
+            await apiClient.request('/api/manual-suggestions/' + editId, { method: 'PUT', body: JSON.stringify(body) });
             toast('已更新手工建议', 'success');
         } else {
-            await api('/api/manual-suggestions', { method: 'POST', body: JSON.stringify(body) });
+            await apiClient.request('/api/manual-suggestions', { method: 'POST', body: JSON.stringify(body) });
             var toastMsg = mode === 'always'
                 ? '手工建议已创建，每次对话将自动推送'
                 : '手工建议已创建，下次命中关键词时将触发推送';
@@ -1207,7 +1207,7 @@ async function saveManualSuggestion() {
 }
 
 window.editManualSuggestion = function(id) {
-    api('/api/manual-suggestions', { method: 'GET' }).then(function(data) {
+    apiClient.request('/api/manual-suggestions', { method: 'GET' }).then(function(data) {
         var items = data.items || [];
         var item = null;
         for (var i = 0; i < items.length; i++) {
@@ -1242,7 +1242,7 @@ window.editManualSuggestion = function(id) {
 async function deleteManualSuggestion(id) {
     if (!confirm('确定删除此手工建议？')) return;
     try {
-        await api('/api/manual-suggestions/' + id, { method: 'DELETE' });
+        await apiClient.request('/api/manual-suggestions/' + id, { method: 'DELETE' });
         toast('已删除', 'success');
         // 刷新当前视图
         if (currentFilter === 'manual') loadManualList();
@@ -1252,6 +1252,15 @@ async function deleteManualSuggestion(id) {
 }
 
 window.deleteManualSuggestion = deleteManualSuggestion;
+
+// --- 项目切换刷新接口（供 dashboard.js 项目切换处理器调用）---
+window.refreshSuggestionPanel = function() {
+    loadStatCounts();
+    fetchStats();
+    loadSuggestions(currentFilter);
+    if (currentFilter === 'manual') loadManualList();
+    if (currentFilter === 'injection') loadInjectionList();
+};
 
 // --- 从知识面板提升为建议 ---
 window.promoteToSuggestion = function(content) {

@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ...config import config
@@ -12,7 +12,8 @@ from ...config import config
 # 本模块特有导入
 from ...engine.extractor import MemoryExtractor
 from ...errors import ChromaDBError
-from ..app import _detect_project_id, _invalidate_projects_cache
+from ..app import _invalidate_projects_cache
+from ..dependencies import get_project_id
 from ..models import (
     BatchCreateCardsRequest,
     BatchCreateMemoriesRequest,
@@ -29,7 +30,7 @@ router = APIRouter()
 @router.get("/api/memories")
 def list_memories(
     request: Request,
-    project_id: str = None,
+    project_id: str = Depends(get_project_id),
     limit: int = Query(default=20, ge=1),
     offset: int = Query(default=0, ge=0),
     type: list[str] = Query(default=None),
@@ -123,11 +124,11 @@ def list_memories(
 
 
 @router.post("/api/memories", status_code=201)
-def create_memory(request: Request, req: CreateMemoryRequest):
+def create_memory(request: Request, req: CreateMemoryRequest, project_id: str = Depends(get_project_id)):
     mem = request.app.state.mem
     metadata = {
         "type": req.type,
-        "project_id": req.project_id or _detect_project_id(),
+        "project_id": req.project_id or project_id,
         "project_name": os.path.basename(os.getcwd()),
         "source": "user_appended",
         "quality_score": 1.0,
@@ -141,7 +142,7 @@ def create_memory(request: Request, req: CreateMemoryRequest):
     _invalidate_projects_cache()
     # v0.4.1: 异步冲突检测
     if config.memory.conflict_detection_enabled:
-        pid = req.project_id or _detect_project_id()
+        pid = req.project_id or project_id
         extractor = MemoryExtractor(memory_system=mem, project_id=pid)
         extractor._detect_conflicts_async(req.content, mem_id)
     return {"id": mem_id, "message": "记忆已创建"}
@@ -153,14 +154,14 @@ def create_memory(request: Request, req: CreateMemoryRequest):
 @router.get("/api/memories/export")
 def export_memories_api(
     request: Request,
-    project_id: str = Query(None),
+    project_id: str = Depends(get_project_id),
     type: list[str] = Query(None),
     include_embeddings: bool = Query(False),
     memory_ids: list[str] = Query(None),
 ):
     """导出记忆为 JSON Lines 流式下载"""
     mem = request.app.state.mem
-    pid = project_id or _detect_project_id()
+    pid = project_id
     type_filter = type if type else None
     ids_filter = memory_ids if memory_ids else None
 
@@ -193,7 +194,7 @@ def export_memories_api(
 async def import_memories_api(
     request: Request,
     file: UploadFile,
-    project_id: str = Query(None),
+    project_id: str = Depends(get_project_id),
     strategy: str = Query("skip"),
 ):
     """上传 JSON Lines 文件导入记忆"""
@@ -208,7 +209,7 @@ async def import_memories_api(
         raise HTTPException(413, f"导入文件过大（{int(content_length) / 1024 / 1024:.1f}MB），上限 50MB，请拆分后重试")
 
     mem = request.app.state.mem
-    pid = project_id or _detect_project_id()
+    pid = project_id
 
     # P1-5: 流式逐行读取，避免全量加载到内存
     raw_bytes = await file.read()
@@ -360,13 +361,13 @@ def view_memory(request: Request, id: str):
 
 
 @router.post("/api/memories/batch-create", status_code=201)
-def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest):
+def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest, project_id: str = Depends(get_project_id)):
     mem = request.app.state.mem
     created = []
     errors = []
     for m in req.memories:
         # v0.4.1: 写入前去重
-        pid = m.project_id or _detect_project_id()
+        pid = m.project_id or project_id
         try:
             similar = mem.recall_with_scores(m.content, project_id=pid)
         except Exception as e:
@@ -408,14 +409,14 @@ def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest):
 
 
 @router.post("/api/memories/batch-create-v2", status_code=201)
-def batch_create_cards(request: Request, req: BatchCreateCardsRequest):
+def batch_create_cards(request: Request, req: BatchCreateCardsRequest, project_id: str = Depends(get_project_id)):
     """批量创建记忆（知识卡片格式），将 problem/solution/insight 拼接后写入"""
     mem = request.app.state.mem
     created = []
     overwrites = 0
     _conflict_cards = []  # (mem_id, full_content) 用于异步冲突检测
     errors = []
-    pid = req.project_id or _detect_project_id()
+    pid = req.project_id or project_id
     pname = Path.cwd().name
 
     logger.info(

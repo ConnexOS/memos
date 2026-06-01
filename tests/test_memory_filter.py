@@ -102,66 +102,6 @@ class TestRecallProjectId:
         assert results == []
 
 
-class TestFeedbackBoost:
-    """反馈信号排序加成（Sprint 1）"""
-    COLLECTION = "test_feedback_boost"
-
-    def setup_method(self):
-        self.mem = ContextMemory(self.COLLECTION)
-        clean_collection(self.mem)
-
-    def test_boost_zero_when_no_feedback(self):
-        """无反馈计数时 feedback_boost 返回 0。"""
-        assert ContextMemory._compute_feedback_boost({}) == 0.0
-        assert ContextMemory._compute_feedback_boost({"useful_feedback_count": 0}) == 0.0
-        assert ContextMemory._compute_feedback_boost({"not_useful_feedback_count": 0}) == 0.0
-
-    def test_boost_useful_only(self):
-        """仅有用反馈时 boost 在 [0, 0.15] 区间。"""
-        boost = ContextMemory._compute_feedback_boost({"useful_feedback_count": 3, "not_useful_feedback_count": 0})
-        assert 0 < boost <= 0.15
-        # 3 条有用: boost = (3 - 0) / 3 * 0.08 = 0.08
-        assert round(boost, 4) == 0.08
-
-    def test_boost_clipped_to_zero(self):
-        """无用反馈显著多于有用时 boost 截断为 0。"""
-        boost = ContextMemory._compute_feedback_boost({"useful_feedback_count": 1, "not_useful_feedback_count": 3})
-        # (1 - 4.5) / 4 * 0.08 = -0.07 → max(0, ...) = 0
-        assert boost == 0.0
-
-    def test_boost_capped(self):
-        """大量有用、无无用反馈时，boost 为归一化上限 0.08。"""
-        boost = ContextMemory._compute_feedback_boost({"useful_feedback_count": 100, "not_useful_feedback_count": 0})
-        assert boost == 0.08
-
-    def test_boost_in_sorting(self):
-        """feedback_boost 在排序中生效：相同相似度、不同反馈计数的记忆，boost>0 排在前。"""
-        mem = self.mem
-
-        # 插入两条记忆，其中一条带 feedback 计数
-        mem.remember("有用的历史决策", {"type": "decision", "useful_feedback_count": 5, "not_useful_feedback_count": 0})
-        mem.remember("普通历史决策", {"type": "decision", "useful_feedback_count": 0, "not_useful_feedback_count": 0})
-
-        results = mem.recall("决策", top_k=5, return_scores=True)
-        scores = {r["id"]: r["final_score"] for r in results}
-        doc_to_score = {r["document"]: r["final_score"] for r in results}
-
-        assert doc_to_score["有用的历史决策"] > doc_to_score["普通历史决策"], \
-            "带反馈加成的记忆应排在前面"
-
-    def test_boost_multiplicative_stacking(self):
-        """乘法叠加验证：feedback_boost 与 decay_factor、reuse_boost 以 × 方式叠加。"""
-        # 有反馈加成的 meta
-        meta_with_fb = {"useful_feedback_count": 3, "not_useful_feedback_count": 0}
-        meta_without_fb = {"useful_feedback_count": 0, "not_useful_feedback_count": 0}
-
-        fb_with = ContextMemory._compute_feedback_boost(meta_with_fb)
-        fb_without = ContextMemory._compute_feedback_boost(meta_without_fb)
-
-        # 确保有反馈时 boost > 0，无反馈时 boost = 0
-        assert fb_with > 0
-        assert fb_without == 0
-
 
 class TestApplyFeedbackToSource:
     """反馈反哺端到端验证（验收 1、2、4）"""
@@ -172,30 +112,29 @@ class TestApplyFeedbackToSource:
         clean_collection(self.mem)
 
     def test_useful_increments_counter(self):
-        """标记有用 → useful_feedback_count +1"""
+        """标记有用 → reuse_count +1（v0.4.6 重构后统一为 reuse_count）"""
         mem_id = self.mem.remember("测试源记忆", {"type": "fact"})
         self.mem._apply_feedback_to_source(mem_id, "useful")
         updated = self.mem.get_memory(mem_id)
-        assert updated["metadata"].get("useful_feedback_count") == 1
-        assert updated["metadata"].get("not_useful_feedback_count", 0) == 0
+        assert updated["metadata"].get("reuse_count") == 1
+        assert updated["metadata"].get("last_feedback_at") is not None
 
     def test_not_useful_increments_counter(self):
-        """标记无用 → not_useful_feedback_count +1"""
+        """标记无用 → reuse_count -1（最低 0）"""
         mem_id = self.mem.remember("测试源记忆", {"type": "fact"})
         self.mem._apply_feedback_to_source(mem_id, "not_useful")
         updated = self.mem.get_memory(mem_id)
-        assert updated["metadata"].get("not_useful_feedback_count") == 1
-        assert updated["metadata"].get("useful_feedback_count", 0) == 0
+        assert updated["metadata"].get("reuse_count", 0) == 0
+        assert updated["metadata"].get("last_feedback_at") is not None
 
     def test_multiple_feedback_accumulates(self):
-        """多次反馈累加计数"""
+        """多次反馈累加 reuse_count"""
         mem_id = self.mem.remember("测试源记忆", {"type": "fact"})
         self.mem._apply_feedback_to_source(mem_id, "useful")
         self.mem._apply_feedback_to_source(mem_id, "useful")
         self.mem._apply_feedback_to_source(mem_id, "not_useful")
         updated = self.mem.get_memory(mem_id)
-        assert updated["metadata"].get("useful_feedback_count") == 2
-        assert updated["metadata"].get("not_useful_feedback_count") == 1
+        assert updated["metadata"].get("reuse_count") == 1
 
     def test_empty_source_id_skips(self):
         """空 source_memory_id → 跳过"""

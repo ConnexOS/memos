@@ -14,7 +14,7 @@ from ...config import config
 from ...engine.extractor import MemoryExtractor, _extract_llm_content, _strip_think_block, format_conversation
 from ...engine.review import _query_conversations_by_date_range, generate_daily_report
 from ...errors import ChromaDBError, LLMUnreachableError
-from ..app import _invalidate_projects_cache
+from ..app import _get_projects_from_db, _invalidate_projects_cache
 from ..models import (
     ConversationSearchRequest,
     DailyReviewRequest,
@@ -588,7 +588,7 @@ def preview_daily_review(request: Request, req: DailyReviewRequest):
 
 @router.post("/api/conversations/daily-review/save")
 def save_daily_review(request: Request, req: SaveDailyReviewRequest):
-    """保存日报到项目目录 document/日报/ 下"""
+    """保存日报到项目目录 document/日报/{项目名}/ 下"""
     # 确定保存目录：优先使用前端传入的项目目录，其次 CLAUDE_PROJECT_DIR，最后 CWD
     if req.project_dir:
         base = Path(req.project_dir)
@@ -596,7 +596,23 @@ def save_daily_review(request: Request, req: SaveDailyReviewRequest):
         base = Path(os.environ["CLAUDE_PROJECT_DIR"])
     else:
         base = Path.cwd()
-    daily_dir = base / "document" / "日报"
+
+    # 获取项目名作为子目录（来自缓存的项目列表）
+    project_name = None
+    if req.project_id:
+        projects = _get_projects_from_db(request.app.state.mem)
+        for p in projects:
+            if p["project_id"] == req.project_id:
+                project_name = p.get("project_name")
+                break
+    if not project_name:
+        project_name = Path.cwd().name
+
+    # 安全化目录名：替换文件系统不合法字符
+    safe_name = "".join(c for c in project_name if c.isalnum() or c in " _-.")
+    safe_name = safe_name.strip() or req.project_id or "unknown"
+
+    daily_dir = base / "document" / "日报" / safe_name
     daily_dir.mkdir(parents=True, exist_ok=True)
 
     # 文件名：YYYY-MM-DD-开发日报.md
@@ -611,6 +627,6 @@ def save_daily_review(request: Request, req: SaveDailyReviewRequest):
 
     logger.info("日报已保存 path=%s size=%d", filepath, len(req.report))
     return {
-        "message": f"日报已保存到 document/日报/{filename}",
+        "message": f"日报已保存到 document/日报/{safe_name}/{filename}",
         "path": str(filepath.relative_to(base)),
     }

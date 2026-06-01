@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import threading
 import time
@@ -26,6 +25,7 @@ from ..engine.memory import ContextMemory
 from ..errors import ChromaDBError, MemoError, http_status_for
 from ..i18n import _ as _i18n
 from .auth import verify_session_token
+from .utils import detect_project_id
 
 # 确保所有 memos.* logger 的 info 日志能输出
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -60,10 +60,6 @@ _PUBLIC_PATHS = {"/login", "/api/auth/login"}
 _KB_TYPES = {"fact", "decision", "preference", "todo", "bug_fix", "feature_design", "code_optimize", "tech_knowledge"}
 
 
-def _detect_project_id() -> str:
-    return hashlib.md5(str(Path.cwd()).encode()).hexdigest()[: config.server.id_length]
-
-
 def _get_projects_from_db(mem: "ContextMemory") -> list[dict]:
     now = time.time()
     ttl = config.dashboard.projects_cache_ttl
@@ -76,11 +72,11 @@ def _get_projects_from_db(mem: "ContextMemory") -> list[dict]:
         logger.warning("获取项目列表失败（ChromaDB 索引不一致），返回缓存或空列表")
         with _projects_cache_lock:
             return _projects_cache["projects"] or []
-    current_id = _detect_project_id()
+    current_id = detect_project_id()
     current_name = Path.cwd().name
     project_map: dict[str, dict] = {}
     for meta in result["metadatas"]:
-        pid = meta.get("project_id", _detect_project_id())
+        pid = meta.get("project_id", detect_project_id())
         is_kb = meta.get("type") in _KB_TYPES
         if pid in project_map:
             project_map[pid]["memory_count"] += 1
@@ -125,7 +121,10 @@ async def _todo_reminder_loop(app: FastAPI):
             await asyncio.sleep(wait_seconds)
 
             mem = app.state.mem
-            pending = mem.count_memories(where={"type": "todo", "todo_status": "pending"})
+            current_pid = detect_project_id()
+            pending = mem.count_memories(
+                where={"type": "todo", "todo_status": "pending", "project_id": current_pid}
+            )
             if pending > 0:
                 notifier = get_notification_logger()
                 notifier.notify(
@@ -224,7 +223,11 @@ class AuthASGIMiddleware:
 
 # --- FastAPI 应用实例 ---
 app = FastAPI(title="长时记忆系统仪表板", lifespan=lifespan)
+
+# Middleware order (LIFO): ProjectContext(extract pid, 1st) -> Auth(authenticate, 2nd) -> routes
 app.add_middleware(AuthASGIMiddleware)
+from .middleware.project_context import ProjectContextMiddleware
+app.add_middleware(ProjectContextMiddleware)
 
 
 # 开发模式禁用静态文件缓存

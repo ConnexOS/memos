@@ -29,10 +29,14 @@ const state = {
     dr: {
         report: null,
         reportDate: null,
+        projectId: null,     // 生成日报时绑定的项目 ID，保存时用此值而非实时读取
         loadingTimer: null,
         loadingSeconds: 0,
     },
 };
+
+// 将 state 暴露到全局，供 api-client.js 等模块读取 currentProject
+window.state = state;
 
 // --- 工具函数 ---
 function toast(msg, type='success') {
@@ -148,7 +152,6 @@ async function loadMemories() {
     const params = new URLSearchParams();
     params.set('limit', state.kb.pageSize);
     params.set('offset', (state.kb.page - 1) * state.kb.pageSize);
-    if (state.currentProject) params.set('project_id', state.currentProject);
     if (state.kb.typeFilter) {
         params.append('type', state.kb.typeFilter);
     } else {
@@ -157,7 +160,7 @@ async function loadMemories() {
     if (state.kb.sourceFilter) params.set('source', state.kb.sourceFilter);
     if (state.kb.sourceDays) params.set('days', state.kb.sourceDays);
     if (state.kb.includeArchived) params.set('include_archived', 'true');
-    const data = await api(`/api/memories?${params}`);
+    const data = await apiClient.request(`/api/memories?${params}`);
     console.log('loadMemories: sourceFilter=' + state.kb.sourceFilter + ' sourceDays=' + state.kb.sourceDays + ' total=' + data.total + ' items=' + (data.memories || []).length);
     state.kb.items = data.memories;
     state.kb.total = data.total || 0;
@@ -258,7 +261,7 @@ function _getTypeGroup(type) {
 
 async function openDetail(id) {
     try {
-        const m = await api(`/api/memories/${id}`);
+        const m = await apiClient.request(`/api/memories/${id}`);
         document.getElementById('edit-id').value = m.id;
         const currentType = m.metadata.type || 'fact';
         const options = _getTypeGroup(currentType);
@@ -289,7 +292,7 @@ document.getElementById('save-edit-btn')?.addEventListener('click', async functi
     const type = document.getElementById('edit-type').value;
     if (!content) { toast('内容不能为空', 'warning'); return; }
     try {
-        await api(`/api/memories/${id}`, {
+        await apiClient.request(`/api/memories/${id}`, {
             method: 'PUT',
             body: JSON.stringify({content, type}),
         });
@@ -305,7 +308,7 @@ document.getElementById('delete-detail-btn')?.addEventListener('click', async fu
     const id = document.getElementById('edit-id').value;
     if (!confirm('确定删除此记忆？此操作不可恢复。')) return;
     try {
-        await api(`/api/memories/${id}`, {method:'DELETE'});
+        await apiClient.request(`/api/memories/${id}`, {method:'DELETE'});
         toast('已删除');
         bootstrap.Modal.getInstance(document.getElementById('detailModal')).hide();
         await loadMemories();
@@ -327,9 +330,8 @@ document.getElementById('add-save-btn')?.addEventListener('click', async functio
             const memories = pendingExtracted.map(m => ({
                 content: m.content,
                 type: m.type,
-                ...(state.currentProject ? {project_id: state.currentProject} : {}),
             }));
-            const result = await api('/api/memories/batch-create', {
+            const result = await apiClient.request('/api/memories/batch-create', {
                 method: 'POST',
                 body: JSON.stringify({memories}),
             });
@@ -337,9 +339,9 @@ document.getElementById('add-save-btn')?.addEventListener('click', async functio
             toast(result.message || `已添加 ${memories.length} 条记忆`);
         } else {
             if (!content) return;
-            await api('/api/memories', {
+            await apiClient.request('/api/memories', {
                 method: 'POST',
-                body: JSON.stringify({content, type, ...(state.currentProject ? {project_id: state.currentProject} : {})}),
+                body: JSON.stringify({content, type}),
             });
             toast('记忆已添加');
         }
@@ -384,7 +386,7 @@ document.getElementById('confirm-delete-btn')?.addEventListener('click', async f
     const id = state.deleteTargetId;
     if (!id) return;
     try {
-        await api(`/api/memories/${id}`, {method: 'DELETE'});
+        await apiClient.request(`/api/memories/${id}`, {method: 'DELETE'});
         toast('已删除');
         bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
         await loadMemories();
@@ -396,7 +398,7 @@ document.getElementById('confirm-delete-btn')?.addEventListener('click', async f
 // --- 归档/恢复 ---
 async function toggleArchive(id, isArchived) {
     try {
-        await api(`/api/memories/${id}/${isArchived ? 'restore' : 'archive'}`, {method: 'POST'});
+        await apiClient.request(`/api/memories/${id}/${isArchived ? 'restore' : 'archive'}`, {method: 'POST'});
         toast(isArchived ? '已恢复' : '已归档');
         await loadMemories();
     } catch (e) {
@@ -564,11 +566,10 @@ async function doKBSearch() {
     btn.disabled = true;
     saveKBSearchSuggestion(query);
     try {
-        const data = await api('/api/search', {
+        const data = await apiClient.request('/api/search', {
             method: 'POST',
             body: JSON.stringify({
                 query,
-                project_id: state.currentProject,
                 top_k: parseInt(document.getElementById('kb-search-topk').value) || 5,
                 days_limit: parseInt(document.getElementById('kb-search-days').value) || null,
                 type_filter: document.getElementById('kb-search-type').value || null,
@@ -722,11 +723,10 @@ async function doConvSearch() {
         const dateToStr = document.getElementById('conv-search-date-to').value;
         const dateFrom = dateFromStr ? new Date(dateFromStr).getTime() / 1000 : null;
         const dateTo = dateToStr ? (new Date(dateToStr).getTime() + 86400000) / 1000 : null;
-        const data = await api('/api/conversations/search', {
+        const data = await apiClient.request('/api/conversations/search', {
             method: 'POST',
             body: JSON.stringify({
                 query,
-                project_id: state.currentProject,
                 top_k: 20,
                 date_from: dateFrom,
                 date_to: dateTo,
@@ -811,10 +811,9 @@ async function loadConversations(page) {
     const info = document.getElementById('conv-info');
     try {
         const params = new URLSearchParams();
-        if (state.currentProject) params.set('project_id', state.currentProject);
         params.set('limit', state.conv.pageSize);
         params.set('offset', (state.conv.page - 1) * state.conv.pageSize);
-        const data = await api(`/api/conversations?${params}`);
+        const data = await apiClient.request(`/api/conversations?${params}`);
         state.conv.total = data.total || 0;
         state.conv.items = data.conversations || [];
         info.textContent = `共 ${state.conv.total} 条对话记录`;
@@ -882,7 +881,7 @@ async function goConvPage(page) {
 async function deleteConversation(id) {
     if (!id || !confirm('确定要删除这条对话记录吗？此操作不可撤销。')) return;
     try {
-        await api(`/api/memories/${id}`, {method: 'DELETE'});
+        await apiClient.request(`/api/memories/${id}`, {method: 'DELETE'});
         toast('对话已删除');
         await loadConversations();
     } catch (e) {
@@ -896,7 +895,7 @@ async function batchDeleteConversations() {
     if (!confirm(`确定要删除选中的 ${checked.length} 条对话记录吗？此操作不可撤销。`)) return;
     const ids = Array.from(checked).map(cb => cb.value);
     try {
-        await api('/api/memories/batch-delete', {
+        await apiClient.request('/api/memories/batch-delete', {
             method: 'POST',
             body: JSON.stringify({ids}),
         });
@@ -917,6 +916,8 @@ async function batchExportConversations() {
         const params = new URLSearchParams();
         params.append('type', 'user_input');
         params.append('type', 'assistant_output');
+        // P0-2: export 使用 fetch 处理 blob 流，手动注入 project_id
+        if (window.state?.currentProject) params.append('project_id', window.state.currentProject);
         const resp = await fetch('/api/memories/export?' + params.toString());
         if (!resp.ok) throw new Error(`导出失败 (HTTP ${resp.status})`);
 
@@ -969,11 +970,31 @@ document.getElementById('project-selector')?.addEventListener('change', function
     state.currentProject = this.value || null;
     state.kb.page = 1;
     state.conv.page = 1;
+    // 清空今日回顾旧数据
+    state.dr.report = null;
+    state.dr.reportDate = null;
+    state.dr.projectId = null;
+    document.getElementById('dr-report-container')?.classList.add('d-none');
+    document.getElementById('dr-empty')?.classList.remove('d-none');
+    document.getElementById('dr-error')?.classList.add('d-none');
+    document.getElementById('dr-info').textContent = '';
     updateKbCountLabel();
+    // 刷新主面板数据（apiClient 自动注入新的 project_id）
     Promise.all([
         loadMemories(),
         loadConversations(),
     ]).catch(e => toast('加载失败: ' + e.message, 'danger'));
+    // 刷新建议面板（通过 window 接口，因 suggestions.js 在 IIFE 内）
+    setTimeout(function() {
+        if (typeof window.refreshSuggestionPanel === 'function') window.refreshSuggestionPanel();
+    }, 100);
+    // 刷新待办面板（loadTodos 是全局函数）
+    setTimeout(function() {
+        if (typeof loadTodos === 'function') loadTodos();
+    }, 200);
+    // 刷新统计图表
+    setTimeout(loadUsageStats, 300);
+    setTimeout(loadConflictCount, 600);
 });
 
 // --- 系统状态 ---
@@ -1727,7 +1748,7 @@ document.getElementById('kb-batch-delete-btn')?.addEventListener('click', async 
     if (!confirm(`确定要删除选中的 ${checked.length} 条记忆吗？此操作不可撤销。`)) return;
     const ids = Array.from(checked).map(cb => cb.value);
     try {
-        await api('/api/memories/batch-delete', {
+        await apiClient.request('/api/memories/batch-delete', {
             method: 'POST',
             body: JSON.stringify({ids}),
         });
@@ -1775,7 +1796,11 @@ document.getElementById('kb-import-submit')?.addEventListener('click', async fun
     try {
         const form = new FormData();
         form.append('file', file);
-        const resp = await fetch(`/api/memories/import?strategy=${strategy}`, {
+        // P0-2: import 使用 FormData，手动注入 project_id
+        const importUrl = window.state?.currentProject
+            ? `/api/memories/import?strategy=${strategy}&project_id=${encodeURIComponent(window.state.currentProject)}`
+            : `/api/memories/import?strategy=${strategy}`;
+        const resp = await fetch(importUrl, {
             method: 'POST',
             body: form,
         });
@@ -1817,7 +1842,8 @@ document.getElementById('kb-batch-export-btn')?.addEventListener('click', async 
     try {
         const params = new URLSearchParams();
         checkedBoxes.forEach(cb => params.append('memory_ids', cb.value));
-
+        // P0-2: export 使用 fetch 处理 blob 流，手动注入 project_id
+        if (window.state?.currentProject) params.append('project_id', window.state.currentProject);
         const resp = await fetch('/api/memories/export?' + params.toString());
         if (!resp.ok) {
             const text = await resp.text();
@@ -2099,7 +2125,7 @@ document.getElementById('extract-memory-btn')?.addEventListener('click', async f
         const extractBody = {ids: _extractConvIds, prompt_id: promptId};
         if (promptVersion) extractBody.prompt_version = promptVersion;
         if (endpointName) extractBody.llm_endpoint = endpointName;
-        const data = await api('/api/conversations/extract-v2', {
+        const data = await apiClient.request('/api/conversations/extract-v2', {
             method: 'POST',
             signal: controller.signal,
             body: JSON.stringify(extractBody),
@@ -2165,7 +2191,7 @@ document.getElementById('extract-retry-btn')?.addEventListener('click', async fu
         if (promptVersion) extractBody.prompt_version = promptVersion;
         if (endpointName) extractBody.llm_endpoint = endpointName;
         console.log('extract-v2 request:', JSON.stringify(extractBody));
-        const data = await api('/api/conversations/extract-v2', {
+        const data = await apiClient.request('/api/conversations/extract-v2', {
             method: 'POST',
             body: JSON.stringify(extractBody),
         });
@@ -2203,7 +2229,7 @@ document.getElementById('extract-copy-msg-btn')?.addEventListener('click', async
         const previewBody = {ids: _extractConvIds, prompt_id: promptId};
         if (promptVersion) previewBody.prompt_version = promptVersion;
         if (endpointName) previewBody.llm_endpoint = endpointName;
-        const data = await api('/api/conversations/extract-preview', {
+        const data = await apiClient.request('/api/conversations/extract-preview', {
             method: 'POST',
             body: JSON.stringify(previewBody),
         });
@@ -2234,7 +2260,7 @@ document.getElementById('extract-save-btn')?.addEventListener('click', async fun
     const origHtml = this.innerHTML;
     this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
     try {
-        const result = await api('/api/memories/batch-create-v2', {
+        const result = await apiClient.request('/api/memories/batch-create-v2', {
             method: 'POST',
             body: JSON.stringify({
                 cards: cards.map(c => ({
@@ -2245,7 +2271,6 @@ document.getElementById('extract-save-btn')?.addEventListener('click', async fun
                     quality_score: c.quality_score ?? null,
                     quality_reason: c.quality_reason || '',
                 })),
-                project_id: state.currentProject,
             }),
         });
         const errDetail = result.errors && result.errors.length
@@ -3226,18 +3251,8 @@ function _escapeHtml(text) {
     if (el) el.value = today;
 })();
 
-// 填充项目过滤和端点选择器
+// 填充端点选择器（项目选择统一使用顶部工具栏）
 async function loadDRFilters() {
-    var sel = document.getElementById('dr-project-filter');
-    sel.innerHTML = '<option value="">全部项目</option>';
-    (state.projects || []).forEach(function(p) {
-        var opt = document.createElement('option');
-        opt.value = p.project_id;
-        opt.textContent = (p.project_name || p.project_id) + ' (' + (p.project_id || '').slice(0, 8) + ')';
-        if (p.project_id === state.currentProject) opt.selected = true;
-        sel.appendChild(opt);
-    });
-
     // 加载 LLM 端点
     try {
         var data = await api('/api/llm/endpoints');
@@ -3411,9 +3426,8 @@ setInterval(loadConflictCount, 30000);  // 每30秒轮询
 // ==== v0.4.1 用量统计 ====
 async function loadUsageStats() {
     try {
-        var pid = state.currentProject ? '&project_id=' + encodeURIComponent(state.currentProject) : '';
-        var today = await api('/api/stats/usage?period=today' + pid);
-        var week = await api('/api/stats/usage?period=week' + pid);
+        var today = await apiClient.request('/api/stats/usage?period=today');
+        var week = await apiClient.request('/api/stats/usage?period=week');
         var fmtLink = function(label, src, days) {
             var d = days ? '&days=' + days : '';
             return '<a href=\"#\" class=\"v41-stat-link\" onclick=\"filterBySource(\'' + src + '\', ' + (days || 0) + ');return false;\">' + label + '</a>';
@@ -3445,8 +3459,7 @@ setInterval(loadUsageStats, 60000);  // 每60秒刷新统计
 async function loadTrendChart() {
     var container = document.getElementById('trend-chart-container');
     try {
-        var pid = state.currentProject ? '&project_id=' + encodeURIComponent(state.currentProject) : '';
-        var data = await api('/api/stats/trend?days=7' + pid);
+        var data = await apiClient.request('/api/stats/trend?days=7');
         var trend = data.trend || [];
         if (!trend.length) { container.innerHTML = '<div class="text-muted small text-center py-5">暂无数据</div>'; return; }
 
@@ -3506,13 +3519,6 @@ async function loadTrendChart() {
             '</div>' + datesHtml;
     } catch(e) { console.error('trend chart error:', e); container.innerHTML = '<div class="text-danger small text-center py-5">加载失败</div>'; }
 }
-
-// 项目切换时刷新统计
-var _origProjectChange = document.getElementById('project-selector').onchange;
-document.getElementById('project-selector')?.addEventListener('change', function() {
-    setTimeout(loadUsageStats, 300);
-    setTimeout(loadConflictCount, 600);
-});
 
 document.getElementById('daily-review-tab')?.addEventListener('shown.bs.tab', async function() {
     loadDRFilters();
@@ -3629,14 +3635,12 @@ document.getElementById('dr-generate-btn')?.addEventListener('click', async func
     startDRLoadingTimer();
 
     try {
-        var projectId = document.getElementById('dr-project-filter').value || null;
         var endpointName = document.getElementById('dr-endpoint-select').value || '';
         var promptSel = document.getElementById('dr-prompt-select');
         var promptId = promptSel.value || '';
         var promptVersion = promptSel.selectedOptions[0]?.dataset?.version || null;
 
-        var body = { date: date };
-        if (projectId) body.project_id = projectId;
+        var body = { date: date, project_id: window.state?.currentProject || null };
         if (endpointName) body.llm_endpoint = endpointName;
         if (promptId) body.prompt_id = promptId;
         if (promptVersion) body.prompt_version = promptVersion;
@@ -3644,7 +3648,7 @@ document.getElementById('dr-generate-btn')?.addEventListener('click', async func
         var controller = new AbortController();
         var timeoutId = setTimeout(function() { controller.abort(); }, 600000);
 
-        var data = await api('/api/conversations/daily-review', {
+        var data = await apiClient.request('/api/conversations/daily-review', {
             method: 'POST',
             signal: controller.signal,
             body: JSON.stringify(body),
@@ -3657,6 +3661,7 @@ document.getElementById('dr-generate-btn')?.addEventListener('click', async func
         if (data.report) {
             state.dr.report = data.report;
             state.dr.reportDate = date;
+            state.dr.projectId = window.state?.currentProject || null;
             document.getElementById('dr-info').textContent =
                 '共 ' + data.conversation_count + ' 条对话记录';
             document.getElementById('dr-report-content').innerHTML = renderMarkdown(data.report);
@@ -3700,11 +3705,12 @@ document.getElementById('dr-save-btn')?.addEventListener('click', async function
     var btn = this;
     btn.disabled = true;
     try {
-        var data = await api('/api/conversations/daily-review/save', {
+        var data = await apiClient.request('/api/conversations/daily-review/save', {
             method: 'POST',
             body: JSON.stringify({
                 report: state.dr.report,
                 date: state.dr.reportDate || document.getElementById('dr-date').value,
+                project_id: state.dr.projectId || window.state?.currentProject || null,
             }),
         });
         toast(data.message, 'success');
@@ -3720,14 +3726,13 @@ document.getElementById('dr-regenerate-btn')?.addEventListener('click', function
 });
 document.getElementById('dr-extract-todos-btn')?.addEventListener('click', async function() {
     var date = document.getElementById('dr-date').value;
-    var projectId = document.getElementById('dr-project-filter').value;
     if (!date) { toast('请先生成日报', 'warning'); return; }
     try {
         this.disabled = true;
         this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>提取中...';
-        var resp = await api('/api/conversations/extract-todos', {
+        var resp = await apiClient.request('/api/conversations/extract-todos', {
             method: 'POST',
-            body: JSON.stringify({date: date, project_id: projectId || null, report_text: state.dr.report || null}),
+            body: JSON.stringify({date: date, project_id: window.state?.currentProject || null, report_text: state.dr.report || null}),
             headers: {'Content-Type': 'application/json'}
         });
         var msg = resp.message || '提取完成';
@@ -3753,18 +3758,16 @@ document.getElementById('dr-preview-btn')?.addEventListener('click', async funct
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>加载中...';
     try {
-        var projectId = document.getElementById('dr-project-filter').value || null;
         var endpointName = document.getElementById('dr-endpoint-select').value || '';
         var promptSel = document.getElementById('dr-prompt-select');
         var promptId = promptSel.value || '';
         var promptVersion = promptSel.selectedOptions[0]?.dataset?.version || null;
-        var body = { date: date };
-        if (projectId) body.project_id = projectId;
+        var body = { date: date, project_id: window.state?.currentProject || null };
         if (endpointName) body.llm_endpoint = endpointName;
         if (promptId) body.prompt_id = promptId;
         if (promptVersion) body.prompt_version = promptVersion;
 
-        var data = await api('/api/conversations/daily-review/preview', {
+        var data = await apiClient.request('/api/conversations/daily-review/preview', {
             method: 'POST',
             body: JSON.stringify(body),
         });

@@ -105,6 +105,20 @@ D:/DevSpace/MEMOS/
 .\venv\Scripts\python -m memos.cli today
 ```
 
+## Windows 终端编码陷阱
+
+**现象**：Python 输出中文文本时显示乱码（如 `��ʱ����`），容易误判为功能异常。
+
+**根因**：Windows 终端默认 GBK（cp936）编码，Python 输出 UTF-8 文本时不匹配，导致显示乱码。ChromaDB 中存储的数据本身是完整的 UTF-8，终端显示问题不影响数据完整性。
+
+**规避**：
+- 怀疑 recall/MCP 输出异常时，先确认是否为终端编码问题：输出到文件而非终端
+  ```bash
+  python -c "..." > output.txt  # 文件用 UTF-8 打开即可
+  ```
+- 或在 Python 命令中显式控制编码：`.encode('utf-8').decode('utf-8')`
+- 中文字符串比较时避免依赖终端显示结果
+
 ## 参考索引
 
 | 文档 | 内容 | 路径 |

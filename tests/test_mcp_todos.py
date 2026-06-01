@@ -1,4 +1,4 @@
-"""Phase 2 R2: MCP list_todos / update_todo 工具测试"""
+"""Phase 2 R2: MCP list_todos / update_todo / create_todo 工具测试"""
 
 import json
 from unittest import mock
@@ -6,7 +6,7 @@ from unittest import mock
 import pytest
 
 # 直接从模块导入工具函数（FastMCP @tool() 返回原始函数）
-from memos.server.mcp import list_todos, update_todo
+from memos.server.mcp import create_todo, list_todos, update_todo
 
 
 class TestMcpListTodos:
@@ -125,3 +125,68 @@ class TestMcpUpdateTodo:
         """空 ID 返回错误"""
         result = update_todo("", "pending")
         assert "不能为空" in result
+
+
+class TestMcpCreateTodo:
+    """MCP create_todo 工具测试（v0.4.8 新增）"""
+
+    def test_create_todo_success(self):
+        """成功创建待办，验证 metadata 完整写入"""
+        fm = mock.Mock()
+        fm.remember.return_value = "todo-001"
+        with mock.patch("memos.server.mcp._get_memory", return_value=fm):
+            result = create_todo(content="测试待办", priority="high")
+            data = json.loads(result)
+            assert data["id"] == "todo-001"
+            assert data["message"] == "待办已创建"
+            fm.remember.assert_called_once()
+            args, kwargs = fm.remember.call_args
+            assert args[0] == "测试待办"
+            meta = kwargs["metadata"]
+            assert meta["type"] == "todo"
+            assert meta["todo_status"] == "pending"
+            assert meta["priority"] == "high"
+            assert meta["active"] is True
+            assert meta["source"] == "mcp"
+            assert json.loads(meta["status_history"]) == []
+
+    def test_create_todo_empty_content(self):
+        """content 为空时返回错误"""
+        result = create_todo(content="")
+        assert "不能为空" in result
+
+        result = create_todo(content="   ")
+        assert "不能为空" in result
+
+    def test_create_todo_default_priority(self):
+        """默认 priority 为 medium"""
+        fm = mock.Mock()
+        fm.remember.return_value = "todo-002"
+        with mock.patch("memos.server.mcp._get_memory", return_value=fm):
+            create_todo(content="默认优先级待办")
+            _, kwargs = fm.remember.call_args
+            assert kwargs["metadata"]["priority"] == "medium"
+
+    def test_create_todo_invalid_priority(self):
+        """无效 priority 返回错误"""
+        result = create_todo(content="测试", priority="urgent")
+        assert "无效" in result
+        assert "high" in result or "medium" in result or "low" in result
+
+    def test_create_todo_with_due_date(self):
+        """含 due_date 时写入 metadata"""
+        fm = mock.Mock()
+        fm.remember.return_value = "todo-003"
+        with mock.patch("memos.server.mcp._get_memory", return_value=fm):
+            create_todo(content="带截止日期的待办", due_date="2026-06-15")
+            _, kwargs = fm.remember.call_args
+            assert kwargs["metadata"]["due_date"] == "2026-06-15"
+
+    def test_create_todo_without_due_date(self):
+        """无 due_date 时不写入 metadata"""
+        fm = mock.Mock()
+        fm.remember.return_value = "todo-004"
+        with mock.patch("memos.server.mcp._get_memory", return_value=fm):
+            create_todo(content="不带动截止日期的待办")
+            _, kwargs = fm.remember.call_args
+            assert "due_date" not in kwargs["metadata"]

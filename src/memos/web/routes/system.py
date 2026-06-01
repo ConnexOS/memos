@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...config import config
 
 # 本模块特有导入
-from ..app import _detect_project_id, _get_projects_from_db
+from ..app import _get_projects_from_db
+from ..dependencies import get_project_id
+from ..utils import detect_project_id
 from ..services.helpers import _calc_db_size, _get_llama_status
 
 logger = logging.getLogger(__name__)
@@ -292,7 +294,7 @@ def conflict_stats(request: Request):
 
 
 @router.post("/api/conversations/extract-todos")
-def extract_todos_from_review(request: Request, body: dict):
+def extract_todos_from_review(request: Request, body: dict, project_id: str = Depends(get_project_id)):
     """从今日回顾日报中提取待办事项（LLM 识别可执行项 + 去重 + 批量写入）。"""
     import json as _json
     import time as _time
@@ -301,7 +303,7 @@ def extract_todos_from_review(request: Request, body: dict):
     from ...engine.extractor import _extract_llm_content, _strip_think_block, get_llm_api_key, get_llm_url
 
     date = (body.get("date") or "").strip()
-    project_id = body.get("project_id") or _detect_project_id()
+    project_id = body.get("project_id") or project_id
 
     if not date:
         from datetime import date as _date
@@ -469,7 +471,7 @@ def usage_trend(request: Request, days: int = 7):
 @router.get("/api/projects")
 def list_projects(request: Request):
     projects = _get_projects_from_db(request.app.state.mem)
-    return {"projects": projects, "current_project": _detect_project_id(), "current_project_name": Path.cwd().name}
+    return {"projects": projects, "current_project": detect_project_id(), "current_project_name": Path.cwd().name}
 
 
 # --- API: 系统状态 ---

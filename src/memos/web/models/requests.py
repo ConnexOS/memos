@@ -100,6 +100,7 @@ class DailyReviewRequest(BaseModel):
 class SaveDailyReviewRequest(BaseModel):
     report: str = Field(min_length=1)
     date: str
+    project_id: str | None = Field(default=None, description="当前项目 ID，用于确定保存子目录")
     project_dir: str | None = Field(default=None, description="项目根目录路径，日报保存到此目录的 document/日报/ 下")
 
 

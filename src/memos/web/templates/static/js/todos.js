@@ -1,4 +1,8 @@
-// ==== v0.4.5 R2 待办面板交互 ====
+// ==== v0.4.5 R2 / v0.4.8 待办面板交互 ====
+
+// 轮询定时器
+var _todoPollingTimer = null;
+var _todoLoading = false;  // 加载守卫，防止并发
 
 // 状态操作按钮矩阵
 const _TODO_ACTIONS = {
@@ -37,8 +41,10 @@ function _sourceLabel(raw) {
     return map[raw] || raw || '?';
 }
 
-// 加载待办列表
+// 加载待办列表（含并发守卫）
 async function loadTodos() {
+    if (_todoLoading) return;
+    _todoLoading = true;
     var list = document.getElementById('todo-list');
     list.innerHTML = '<div class="text-muted small text-center py-3">加载中...</div>';
     try {
@@ -48,8 +54,7 @@ async function loadTodos() {
         var url = '/api/todos?limit=100&sort=' + sort;
         if (filter) url += '&todo_status=' + filter;
         if (showArchived) url += '&show_archived=true';
-        if (state.currentProject) url += '&project_id=' + encodeURIComponent(state.currentProject);
-        var data = await api(url);
+        var data = await apiClient.request(url);
         var todos = data.todos || [];
         if (todos.length === 0) {
             list.innerHTML = '<div class="text-muted small text-center py-3">暂无待办事项</div>';
@@ -59,6 +64,8 @@ async function loadTodos() {
     } catch (e) {
         list.innerHTML = '<div class="text-danger small text-center py-3">加载失败</div>';
         console.error('loadTodos error:', e);
+    } finally {
+        _todoLoading = false;
     }
 }
 
@@ -180,11 +187,22 @@ function renderTodos(todos, sortMode) {
     });
 
     list.innerHTML = html;
+}
 
-    // 每5分钟自动刷新（仅 tab 可见时）
-    if (window._todoRefreshTimer) clearTimeout(window._todoRefreshTimer);
-    if (!document.hidden) {
-        window._todoRefreshTimer = setTimeout(loadTodos, 300000);
+// --- v0.4.8: 30s 自动轮询（Tab 隐藏时暂停）---
+function startTodoPolling() {
+    if (_todoPollingTimer) return;
+    _todoPollingTimer = setInterval(function() {
+        if (!document.hidden) {
+            loadTodos();
+        }
+    }, 30000);
+}
+
+function stopTodoPolling() {
+    if (_todoPollingTimer) {
+        clearInterval(_todoPollingTimer);
+        _todoPollingTimer = null;
     }
 }
 
@@ -257,7 +275,7 @@ async function handleTodoDrop(fromId, toId) {
     // 3) 全量重分配 sort_order = position * 10000
     try {
         for (var i = 0; i < cards.length; i++) {
-            await api('/api/todos/' + cards[i].dataset.id, {
+            await apiClient.request('/api/todos/' + cards[i].dataset.id, {
                 method: 'PUT',
                 body: JSON.stringify({sort_order: i * 10000}),
                 headers: {'Content-Type': 'application/json'}
@@ -287,7 +305,7 @@ async function moveTodo(id, direction) {
     // 全量重分配 sort_order = position * 10000，确保顺序一致
     try {
         for (var i = 0; i < cards.length; i++) {
-            await api('/api/todos/' + cards[i].dataset.id, {
+            await apiClient.request('/api/todos/' + cards[i].dataset.id, {
                 method: 'PUT',
                 body: JSON.stringify({sort_order: i * 10000}),
                 headers: {'Content-Type': 'application/json'}
@@ -323,7 +341,7 @@ async function createTodo() {
     try {
         var body = {content: content, priority: priority};
         if (dueDate) body.due_date = dueDate;
-        await api('/api/todos', {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}});
+        await apiClient.request('/api/todos', {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}});
         bootstrap.Modal.getInstance(document.getElementById('todoCreateModal')).hide();
         toast('待办已创建', 'success');
         loadTodos();
@@ -341,7 +359,7 @@ function resetCreateTodoForm() {
 // 状态变更
 async function changeTodoStatus(id, status) {
     try {
-        await api('/api/todos/' + id + '/status', {method: 'POST', body: JSON.stringify({todo_status: status}), headers: {'Content-Type': 'application/json'}});
+        await apiClient.request('/api/todos/' + id + '/status', {method: 'POST', body: JSON.stringify({todo_status: status}), headers: {'Content-Type': 'application/json'}});
         loadTodos();
     } catch (e) {
         toast('状态变更失败: ' + (e.message || e), 'danger');
@@ -362,7 +380,7 @@ function openEditTodoModal(id) {
 
 async function fetchTodoContent(id) {
     try {
-        var data = await api('/api/memories/' + id);
+        var data = await apiClient.request('/api/memories/' + id);
         return data.document || '';
     } catch(e) {
         return '';
@@ -374,7 +392,7 @@ async function saveEditTodo() {
     var newContent = document.getElementById('todo-edit-content').value.trim();
     if (!newContent) { toast('内容不能为空', 'warning'); return; }
     try {
-        await api('/api/todos/' + _editTodoId, {method: 'PUT', body: JSON.stringify({content: newContent}), headers: {'Content-Type': 'application/json'}});
+        await apiClient.request('/api/todos/' + _editTodoId, {method: 'PUT', body: JSON.stringify({content: newContent}), headers: {'Content-Type': 'application/json'}});
         bootstrap.Modal.getInstance(document.getElementById('todoEditModal')).hide();
         toast('待办已更新', 'success');
         _editTodoId = null;
@@ -388,7 +406,7 @@ async function saveEditTodo() {
 async function deleteTodo(id) {
     if (!confirm('确定删除该待办？')) return;
     try {
-        await api('/api/todos/' + id, {method: 'DELETE'});
+        await apiClient.request('/api/todos/' + id, {method: 'DELETE'});
         toast('待办已删除', 'success');
         loadTodos();
     } catch (e) {
@@ -399,7 +417,7 @@ async function deleteTodo(id) {
 // 归档单个待办
 async function archiveTodo(id) {
     try {
-        await api('/api/todos/' + id + '/archive', {method: 'POST'});
+        await apiClient.request('/api/todos/' + id + '/archive', {method: 'POST'});
         toast('待办已归档', 'success');
         loadTodos();
     } catch (e) {
@@ -412,7 +430,7 @@ async function archiveTodosByStatus(status) {
     var label = {completed: '已完成', cancelled: '已取消'}[status] || status;
     if (!confirm('确定归档所有"' + label + '"待办？')) return;
     try {
-        var result = await api('/api/todos/bulk-archive?todo_status=' + status, {method: 'POST'});
+        var result = await apiClient.request('/api/todos/bulk-archive?todo_status=' + status, {method: 'POST'});
         toast('已归档 ' + (result.count || 0) + ' 条' + label + '待办', 'success');
         loadTodos();
     } catch (e) {
@@ -425,7 +443,7 @@ async function deleteTodosByStatus(status) {
     var label = {completed: '已完成', cancelled: '已取消'}[status] || status;
     if (!confirm('确定删除所有"' + label + '"待办？此操作不可恢复。')) return;
     try {
-        var result = await api('/api/todos/bulk?todo_status=' + status, {method: 'DELETE'});
+        var result = await apiClient.request('/api/todos/bulk?todo_status=' + status, {method: 'DELETE'});
         toast('已删除 ' + (result.count || 0) + ' 条' + label + '待办', 'success');
         loadTodos();
     } catch (e) {
@@ -433,14 +451,27 @@ async function deleteTodosByStatus(status) {
     }
 }
 
-// Tab 切换时加载 + 编辑框快捷键 + 创建待办模态框绑定
+// Tab 切换时加载 + 轮询控制 + 编辑框快捷键 + 创建待办模态框绑定
 document.addEventListener('DOMContentLoaded', function() {
     var todoTab = document.getElementById('todo-tab');
     if (todoTab) {
         todoTab.addEventListener('shown.bs.tab', function() {
             loadTodos();
+            startTodoPolling();
         });
+        todoTab.addEventListener('hide.bs.tab', stopTodoPolling);
     }
+    // 页面可见性变化时暂停/恢复轮询
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopTodoPolling();
+        } else {
+            var todoPanel = document.getElementById('todo-panel');
+            if (todoPanel && todoPanel.classList.contains('active')) {
+                startTodoPolling();
+            }
+        }
+    });
     var editInput = document.getElementById('todo-edit-content');
     if (editInput) {
         editInput.addEventListener('keydown', function(e) {
@@ -456,4 +487,9 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('todo-create-save-btn')?.addEventListener('click', createTodo);
         createModal.addEventListener('hidden.bs.modal', resetCreateTodoForm);
     }
+    // 刷新按钮
+    document.getElementById('todo-refresh-btn')?.addEventListener('click', function() {
+        loadTodos();
+        toast('待办已刷新', 'success');
+    });
 });

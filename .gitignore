@@ -18,6 +18,8 @@ model/
 
 # Configuration
 etc/config.json
+etc/config.schema.json
+etc/usage_log.jsonl
 
 # Version control
 .svn/
@@ -43,3 +45,5 @@ Thumbs.db
 
 # Documentation
 document/
+
+etc/config.json

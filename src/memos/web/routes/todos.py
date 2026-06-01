@@ -4,10 +4,10 @@ import json
 import logging
 import time as time_mod
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...errors import InvalidStateTransitionError
-from ..app import _detect_project_id
+from ..dependencies import get_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def list_todos(
     todo_status: str = Query(None, description="按待办状态过滤"),
     priority: str = Query(None, description="按优先级过滤"),
     sort: str = Query("created_at", description="排序: created_at / priority / custom"),
-    project_id: str = Query(None),
+    project_id: str = Depends(get_project_id),
     show_archived: bool = Query(False, description="是否包含已归档待办"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -137,7 +137,7 @@ def list_todos(
 
 
 @router.post("/api/todos", status_code=201)
-def create_todo(request: Request, body: dict):
+def create_todo(request: Request, body: dict, project_id: str = Depends(get_project_id)):
     """新建待办。写入 type=todo, todo_status=pending。"""
     content = (body.get("content") or "").strip()
     if not content:
@@ -156,7 +156,7 @@ def create_todo(request: Request, body: dict):
         "todo_status": "pending",
         "priority": priority,
         "active": True,
-        "project_id": _detect_project_id(),
+        "project_id": project_id,
         "source": "user_appended",
         "status_history": json.dumps([]),
         "sort_order": now,
@@ -174,7 +174,7 @@ def create_todo(request: Request, body: dict):
 
 
 @router.put("/api/todos/{todo_id}")
-def update_todo(request: Request, todo_id: str, body: dict):
+def update_todo(request: Request, todo_id: str, body: dict, project_id: str = Depends(get_project_id)):
     """编辑待办内容/优先级/到期日/sort_order。todo_status 变更走 status 端点。"""
     mem = request.app.state.mem
     old = mem.get_memory(todo_id)
@@ -184,6 +184,8 @@ def update_todo(request: Request, todo_id: str, body: dict):
     meta = old.get("metadata", {})
     if meta.get("type") != "todo":
         raise HTTPException(400, "该记忆不是待办类型")
+    if meta.get("project_id") != project_id:
+        raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
 
     new_meta = {}
 
@@ -220,7 +222,7 @@ def update_todo(request: Request, todo_id: str, body: dict):
 
 
 @router.post("/api/todos/{todo_id}/status")
-def change_todo_status(request: Request, todo_id: str, body: dict):
+def change_todo_status(request: Request, todo_id: str, body: dict, project_id: str = Depends(get_project_id)):
     """待办状态流转。自动记录 status_history + 时间戳。"""
     target_status = (body.get("todo_status") or "").strip()
     if not target_status or target_status not in TODO_STATUS_VALUES:
@@ -234,6 +236,8 @@ def change_todo_status(request: Request, todo_id: str, body: dict):
     meta = old.get("metadata", {})
     if meta.get("type") != "todo":
         raise HTTPException(400, "该记忆不是待办类型")
+    if meta.get("project_id") != project_id:
+        raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
 
     current_status = _get_todo_status(meta)
 
@@ -289,14 +293,14 @@ def change_todo_status(request: Request, todo_id: str, body: dict):
 
 
 @router.delete("/api/todos/bulk")
-def bulk_delete_todos(request: Request, todo_status: str = Query(...)):
+def bulk_delete_todos(request: Request, todo_status: str = Query(...), project_id: str = Depends(get_project_id)):
     """批量删除指定状态的待办。"""
     if todo_status not in TODO_STATUS_VALUES:
         raise HTTPException(400, f"无效 todo_status: {todo_status}")
 
     mem = request.app.state.mem
     results = mem.list_memories(
-        project_id=_detect_project_id(),
+        project_id=project_id,
         where={"type": "todo", "todo_status": todo_status},
         limit=200,
         offset=0,
@@ -304,6 +308,8 @@ def bulk_delete_todos(request: Request, todo_status: str = Query(...)):
 
     deleted = 0
     for item in results:
+        if item.get("metadata", {}).get("project_id") != project_id:
+            continue  # skip items not belonging to current project
         try:
             mem.delete_memory(item["id"])
             deleted += 1
@@ -315,14 +321,14 @@ def bulk_delete_todos(request: Request, todo_status: str = Query(...)):
 
 
 @router.post("/api/todos/bulk-archive")
-def bulk_archive_todos(request: Request, todo_status: str = Query(...)):
+def bulk_archive_todos(request: Request, todo_status: str = Query(...), project_id: str = Depends(get_project_id)):
     """批量归档指定状态的待办。"""
     if todo_status not in TODO_STATUS_VALUES:
         raise HTTPException(400, f"无效 todo_status: {todo_status}")
 
     mem = request.app.state.mem
     results = mem.list_memories(
-        project_id=_detect_project_id(),
+        project_id=project_id,
         where={"type": "todo", "todo_status": todo_status, "active": True},
         limit=200,
         offset=0,
@@ -330,6 +336,8 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...)):
 
     archived = 0
     for item in results:
+        if item.get("metadata", {}).get("project_id") != project_id:
+            continue  # skip items not belonging to current project
         try:
             mem.update_memory(item["id"], new_metadata={"active": False})
             archived += 1
@@ -341,7 +349,7 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...)):
 
 
 @router.post("/api/todos/{todo_id}/archive")
-def archive_todo(request: Request, todo_id: str):
+def archive_todo(request: Request, todo_id: str, project_id: str = Depends(get_project_id)):
     """归档单个待办。"""
     mem = request.app.state.mem
     old = mem.get_memory(todo_id)
@@ -349,6 +357,8 @@ def archive_todo(request: Request, todo_id: str):
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
     if old.get("metadata", {}).get("type") != "todo":
         raise HTTPException(400, "该记忆不是待办类型")
+    if old.get("metadata", {}).get("project_id") != project_id:
+        raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
     try:
         mem.update_memory(todo_id, new_metadata={"active": False})
     except Exception as e:
@@ -359,7 +369,7 @@ def archive_todo(request: Request, todo_id: str):
 
 
 @router.delete("/api/todos/{todo_id}")
-def delete_todo(request: Request, todo_id: str):
+def delete_todo(request: Request, todo_id: str, project_id: str = Depends(get_project_id)):
     """删除待办。"""
     mem = request.app.state.mem
     old = mem.get_memory(todo_id)
@@ -367,6 +377,8 @@ def delete_todo(request: Request, todo_id: str):
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
     if old.get("metadata", {}).get("type") != "todo":
         raise HTTPException(400, "该记忆不是待办类型")
+    if old.get("metadata", {}).get("project_id") != project_id:
+        raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
     try:
         mem.delete_memory(todo_id)
     except Exception as e:

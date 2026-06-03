@@ -8,10 +8,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...config import config
 from ..app import templates
-from ..dependencies import get_project_id
 
 # 本模块特有导入
 from ..auth import verify_session_token
+from ..dependencies import get_project_id
 from ..services.helpers import _format_time_ago, _get_notification_context
 
 logger = logging.getLogger(__name__)

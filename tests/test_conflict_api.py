@@ -22,6 +22,9 @@ def app():
     mem = ContextMemory(collection_name=col_name)
     app.state.mem = mem
     app.state._pid_override = "test_proj"
+    # 添加 project_id 中间件（同生产环境）
+    from memos.web.middleware.project_context import ProjectContextMiddleware
+    app.add_middleware(ProjectContextMiddleware)
     app.include_router(router)
     return app
 

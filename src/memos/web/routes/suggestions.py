@@ -38,6 +38,10 @@ _injected_cache_lock = threading.Lock()  # 保护缓存读写的线程安全（F
 def _get_injected_records(pid: str) -> list[dict]:
     """获取最近会话的 Layer 1 注入记录（进程级内存缓存 + 文件持久化）。
 
+    只从进程级内存缓存和 Hook 持久化文件读取，不从 ChromaDB 查询。
+    文件路径优先级：① 项目本地 etc/（本地开发模式）→ ② ~/.memos/etc/（消费项目）。
+    两路径均不存在时返回空列表。
+
     线程安全：快速路径（缓存命中）无锁，慢速路径（文件加载）由
     _injected_cache_lock 保护 + 双重检查锁定，避免并发重复加载。
     """
@@ -53,18 +57,22 @@ def _get_injected_records(pid: str) -> list[dict]:
         if pid in _injected_cache and (now - last_load) < _INJECTED_CACHE_TTL:
             return _injected_cache[pid]
 
-        try:
-            from ...config.models import get_memos_home
+        from ...config.models import get_memos_home
 
-            path = get_memos_home() / "etc" / f".injected_records_{pid}.json"
-            if path.exists():
-                data = json.loads(path.read_text(encoding="utf-8"))
-                records = data.get("records", [])
-                _injected_cache[pid] = records
-                _injected_cache_time[pid] = now
-                return records
-        except Exception:
-            pass
+        _file_paths = [
+            get_memos_home() / "etc" / f".injected_records_{pid}.json",
+            Path.home() / ".memos" / "etc" / f".injected_records_{pid}.json",
+        ]
+        for path in _file_paths:
+            try:
+                if path.exists():
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    records = data.get("records", [])
+                    _injected_cache[pid] = records
+                    _injected_cache_time[pid] = now
+                    return records
+            except Exception:
+                continue
 
         _injected_cache[pid] = []
         _injected_cache_time[pid] = now
@@ -310,7 +318,9 @@ def dismiss_all_suggestions(request: Request, project_id: str = Depends(get_proj
 
 
 @router.post("/api/suggestions/{suggestion_id}/feedback")
-def submit_suggestion_feedback(request: Request, suggestion_id: str, req: SuggestionFeedbackRequest, project_id: str = Depends(get_project_id)):
+def submit_suggestion_feedback(
+    request: Request, suggestion_id: str, req: SuggestionFeedbackRequest, project_id: str = Depends(get_project_id)
+):
     """提交反馈 — 更新 suggestion 状态 + 反哺源记忆 + 写入 feedback 记录。"""
     mem = request.app.state.mem
     pid = project_id
@@ -792,7 +802,9 @@ def get_no_suggestions_status():
 
 
 @router.post("/api/manual-suggestions")
-def create_manual_suggestion(request: Request, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)):
+def create_manual_suggestion(
+    request: Request, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)
+):
     """创建手工建议（含 trigger_keywords json.dumps 序列化）。"""
     mem = request.app.state.mem
     pid = project_id
@@ -913,7 +925,9 @@ def delete_manual_suggestion(request: Request, suggestion_id: str, project_id: s
 
 
 @router.put("/api/manual-suggestions/{suggestion_id}")
-def update_manual_suggestion(request: Request, suggestion_id: str, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)):
+def update_manual_suggestion(
+    request: Request, suggestion_id: str, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)
+):
     """更新手工建议（用 remember 重建，保持 hit_count 不变）。"""
     mem = request.app.state.mem
     pid = project_id

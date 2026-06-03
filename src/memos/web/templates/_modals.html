@@ -30,6 +30,30 @@
     </div>
 </div>
 
+<!-- 备份删除确认对话框 -->
+<div class="modal fade" id="backupDeleteModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-scrollable" style="max-width:420px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-1"></i>确认删除备份</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small mb-2">确定删除备份 <strong id="bd-name"></strong>？</p>
+                <div class="alert alert-danger py-2 mb-0 small">
+                    <i class="bi bi-info-circle me-1"></i>此操作不可恢复。
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button id="bd-execute" class="btn btn-sm btn-danger">
+                    <i class="bi bi-trash me-1"></i>删除
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- LLM 端点编辑模态框 -->
 <div class="modal fade" id="endpointModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-scrollable" style="max-width:480px;">

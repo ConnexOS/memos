@@ -2,18 +2,65 @@
 
 **记忆的本质**：`复刻过去是为了更好地服务未来`
 
-## 项目概述
+## 1. 记忆行为准则（始终生效）
+
+本项目配置了跨会话长时记忆（`memos MCP`）。以下规则**AI 助手必须严格执行**。
+
+### 写操作
+
+- **对话中捕获信息** -> 调 `remember(text, metadata)` 追加到缓冲区（缓冲区满后自动提炼）。适用于：技术决策、项目约定、用户偏好、Bug 原因、架构讨论。
+- **用户明确说"记住"** -> 调 `save_knowledge(text, type)` 直接写入知识库。`type` 可选：`fact`/`decision`/`preference`。
+- **不记的内容**：寒暄、临时调试值、编程常识、用户说了"不用记"。
+
+**metadata 约定**：
+
+```go
+// remember 时建议附加
+metadata := map[string]any{
+  "type": "decision",     // 必填，7 选 1
+  "tags": []string{"auth", "jwt"},  // 可选，便于检索
+}
+```
+
+### 创建待办
+
+- **触发条件**（任一）：用户说"记得做"、"回头处理"、"这个问题先放着"、"提一个 issue"。
+- **调用**：`create_todo(content, priority, due_date)`
+  - `priority`：`high`/`medium`/`low`，默认 `medium`
+  - `due_date`：ISO 8601 格式 `YYYY-MM-DD`, 默认`""`
+
+### 检索操作
+
+- **前置条件**：收到涉及技术选型、架构决策、业务规则、Bug 根因分析的请求时。
+- **动作**：将请求中的 2-3 个核心关键词作为 `query`，调 `recall(query, top_k=5, hybrid=true)`。
+- **冲突处理**：如果记忆与当前代码不一致，以代码为准，并用 `update_memory(id, text)` 更新过期记忆。
+
+### 记录对话
+
+- **触发时机**（任一）：
+  - 一个技术决策已明确（如"就用 X 方案"）
+  - 用户确认当前讨论结束（如"好"、"就这样"）
+  - 本轮产生了需要持久化的信息
+- **调用**：`log_complete_turn(user_message, assistant_message)`
+
+### 维护操作
+
+- **记忆过时**：`update_memory(id, text)` 更新内容或标签
+- **记忆错误**：`delete_memory(memory_id)` 硬删除
+- **查看存量**：`list_memories(type_filter="decision", limit=20)`
+
+## 2. 项目概述
 
 主动式记忆系统（MemoMate），包名 `memos`。专门为 AI 编程助手打造记忆伙伴，提供跨对话「记忆」能力。
 当前版本 `v0.4.8`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
 
-## 技术栈
+## 3. 技术栈
 
 Python 3.12 | ChromaDB (PersistentClient) | bge-large-zh-v1.5 (1024维) | MCP (FastMCP, stdio) | FastAPI + Jinja2
 LLM 多端点支持，OpenAI chat/completions 格式。混合检索：rank_bm25 + 向量加权融合。
 测试 pytest (52+文件)，代码风格 ruff (line-length=120)。
 
-## 核心架构
+## 4. 核心架构
 
 ### 四条记忆管线
 
@@ -67,14 +114,7 @@ D:/DevSpace/MEMOS/
 └── pyproject.toml       构建配置
 ```
 
-## 记忆行为准则（始终生效）
-
-- **自动记住**: 遇到技术决策、项目约定、用户偏好时，调 `remember(text, metadata)` 或 `save_knowledge(text, type)`，metadata.type 支持 7 种：`fact`/`decision`/`preference`/`bug_fix`/`feature_design`/`code_optimize`/`tech_knowledge`。不记：寒暄、临时调试、常识、用户说"不用记"。
-- **创建待办**: 需要跟踪的待办事项，调 `create_todo(content, priority, due_date)`。
-- **检索先于决策**: 开始新任务或做技术选型前，先 `recall(query)` 检索历史记忆。
-- **记录对话轮次**: 重要讨论结束后调 `log_complete_turn(user_message, assistant_message)` 存档。
-
-## 关键约定
+## 5. 关键约定
 
 - **去重阈值**: 按向量维度自适应 — 1024维=0.55, 384维=0.65（`_THRESHOLD_MAP`），未知维度回退 `config.memory.similarity_threshold`
 - **项目隔离**: ChromaDB `where.project_id` 过滤，MCP `set_project_id` 切换
@@ -85,7 +125,7 @@ D:/DevSpace/MEMOS/
 - **缓存**: 系统状态 15s TTL，项目列表 30s TTL
 - **嵌入模型**: 本地 `./model/bge-large-zh-v1.5`，无需联网
 
-## 常用命令
+## 6. 常用命令
 
 ```powershell
 # 测试
@@ -105,21 +145,7 @@ D:/DevSpace/MEMOS/
 .\venv\Scripts\python -m memos.cli today
 ```
 
-## Windows 终端编码陷阱
-
-**现象**：Python 输出中文文本时显示乱码（如 `��ʱ����`），容易误判为功能异常。
-
-**根因**：Windows 终端默认 GBK（cp936）编码，Python 输出 UTF-8 文本时不匹配，导致显示乱码。ChromaDB 中存储的数据本身是完整的 UTF-8，终端显示问题不影响数据完整性。
-
-**规避**：
-- 怀疑 recall/MCP 输出异常时，先确认是否为终端编码问题：输出到文件而非终端
-  ```bash
-  python -c "..." > output.txt  # 文件用 UTF-8 打开即可
-  ```
-- 或在 Python 命令中显式控制编码：`.encode('utf-8').decode('utf-8')`
-- 中文字符串比较时避免依赖终端显示结果
-
-## 参考索引
+## 7. 参考索引
 
 | 文档 | 内容 | 路径 |
 |------|------|------|

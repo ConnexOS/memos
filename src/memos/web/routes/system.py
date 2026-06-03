@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ...config import config
 
 # 本模块特有导入
-from ..app import _get_projects_from_db
+from ..app import _get_projects_from_db, _invalidate_projects_cache
 from ..dependencies import get_project_id
-from ..utils import detect_project_id
 from ..services.helpers import _calc_db_size, _get_llama_status
+from ..utils import detect_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +19,14 @@ router = APIRouter()
 
 
 @router.get("/api/conflicts")
-def list_conflicts(request: Request, limit: int = 50):
+def list_conflicts(request: Request, limit: int = 50, project_id: str = Depends(get_project_id)):
     """获取待处理冲突配对列表（合并同一冲突的两条记忆）"""
     import time as time_mod
 
     mem = request.app.state.mem
     results = mem.list_memories(
         where={"conflict_status": "pending"},
+        project_id=project_id,
         limit=200,
     )
     if not results:
@@ -43,7 +44,7 @@ def list_conflicts(request: Request, limit: int = 50):
         key = tuple(sorted([cid, cw]))
         if key not in pair_map:
             pair_map[key] = {
-                "id": cid,
+                "id": "",  # 始终指向 trigger 记忆的 ID
                 "new_memory": None,
                 "existing_memory": None,
                 "reason": meta.get("conflict_reason", ""),
@@ -52,6 +53,7 @@ def list_conflicts(request: Request, limit: int = 50):
             }
         role = meta.get("conflict_role", "")
         if role == "trigger" or (role == "" and pair_map[key]["new_memory"] is None):
+            pair_map[key]["id"] = cid  # 始终使用 trigger 记忆的 ID 作为 pair_id
             pair_map[key]["new_memory"] = {
                 "id": cid,
                 "content": m.get("document", ""),
@@ -70,8 +72,15 @@ def list_conflicts(request: Request, limit: int = 50):
     _now = time_mod.time()
     for key, pair in list(pair_map.items()):
         if pair["new_memory"] is None or pair["existing_memory"] is None:
-            # 从 DB 拉取缺失的那条
-            missing_id = key[1] if pair["new_memory"] is None else key[0]
+            # 从 DB 拉取缺失的那条：根据已存在的记忆确定哪条缺失
+            if pair["new_memory"] is None and pair["existing_memory"] is not None:
+                existing_id = pair["existing_memory"]["id"]
+                missing_id = key[1] if existing_id == key[0] else key[0]
+            elif pair["existing_memory"] is None and pair["new_memory"] is not None:
+                new_id = pair["new_memory"]["id"]
+                missing_id = key[1] if new_id == key[0] else key[0]
+            else:
+                continue
             try:
                 got = mem.get_memory(missing_id)
                 if got:
@@ -83,8 +92,35 @@ def list_conflicts(request: Request, limit: int = 50):
                         "type": gmeta.get("type", ""),
                         "created_at": gmeta.get("timestamp", ""),
                     }
+                    if target == "new_memory":
+                        pair["id"] = got["id"]
+                else:
+                    # 对方记忆已删除 → 自清理孤立冲突
+                    if pair.get("existing_memory"):
+                        orphan_id = pair["existing_memory"]["id"]
+                        try:
+                            mem.update_memory(
+                                orphan_id,
+                                new_metadata={"conflict_status": "dismissed", "conflict_cleanup": "auto"},
+                            )
+                            logger.info("自清理孤立冲突记忆: %s (对方已删除)", orphan_id[:8])
+                        except Exception:
+                            pass
+                    elif pair.get("new_memory"):
+                        orphan_id = pair["new_memory"]["id"]
+                        try:
+                            mem.update_memory(
+                                orphan_id,
+                                new_metadata={"conflict_status": "dismissed", "conflict_cleanup": "auto"},
+                            )
+                            logger.info("自清理孤立冲突记忆: %s (对方已删除)", orphan_id[:8])
+                        except Exception:
+                            pass
             except Exception:
                 logger.warning("无法获取冲突对方记忆: %s", missing_id[:8])
+
+    # 过滤孤立冲突（对方记忆已删除，无法解决）
+    pair_map = {k: v for k, v in pair_map.items() if v["id"]}
 
     # 按 detected_at 降序
     pairs = sorted(pair_map.values(), key=lambda p: p.get("detected_at", 0), reverse=True)
@@ -94,11 +130,11 @@ def list_conflicts(request: Request, limit: int = 50):
 
 
 @router.get("/api/conflicts/count")
-def count_conflicts(request: Request):
+def count_conflicts(request: Request, project_id: str = Depends(get_project_id)):
     """待处理冲突数量（供首页徽标）"""
     mem = request.app.state.mem
     try:
-        all_pending = mem.list_memories(where={"conflict_status": "pending"}, limit=500)
+        all_pending = mem.list_memories(where={"conflict_status": "pending"}, project_id=project_id, limit=500)
         return {"count": len(all_pending)}
     except Exception:
         return {"count": 0}
@@ -256,8 +292,8 @@ def discard_conflict(request: Request, pair_id: str):
                 "conflict_resolution": "discard",
             },
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("清除冲突标记失败 id=%s: %s", existing_mem["id"][:8], e)
 
     # 写入冲突日志
     _write_conflict_log(
@@ -275,11 +311,11 @@ def discard_conflict(request: Request, pair_id: str):
 
 
 @router.get("/api/conflicts/stats")
-def conflict_stats(request: Request):
+def conflict_stats(request: Request, project_id: str = Depends(get_project_id)):
     """冲突决策统计（聚合 decision 分布）"""
     mem = request.app.state.mem
     try:
-        logs = mem.list_memories(where={"type": "conflict_log"}, limit=500)
+        logs = mem.list_memories(where={"type": "conflict_log"}, project_id=project_id, limit=500)
     except Exception:
         return {"total": 0, "decisions": {}}
     decisions: dict[str, int] = {}
@@ -472,6 +508,50 @@ def usage_trend(request: Request, days: int = 7):
 def list_projects(request: Request):
     projects = _get_projects_from_db(request.app.state.mem)
     return {"projects": projects, "current_project": detect_project_id(), "current_project_name": Path.cwd().name}
+
+
+# --- 项目级数据管理（v0.4.8+）---
+
+
+@router.get("/api/projects/{project_id}/stats")
+def get_project_stats(project_id: str, request: Request):
+    """获取指定项目的数据统计概览（按类型分布）"""
+    from collections import Counter
+
+    mem = request.app.state.mem
+    try:
+        result = mem.store.get(where={"project_id": project_id}, include=["metadatas"])
+    except Exception:
+        logger.warning("获取项目 %s 统计失败", project_id)
+        return {"total": 0, "by_type": {}}
+    if not result or not result.get("metadatas"):
+        return {"total": 0, "by_type": {}}
+    stats = Counter(m.get("type", "unknown") for m in result["metadatas"])
+    return {"total": len(result["metadatas"]), "by_type": dict(stats)}
+
+
+@router.delete("/api/projects/{project_id}")
+def delete_project(project_id: str, request: Request):
+    """删除指定项目的全部数据。幂等——项目已空或不存在也返回成功。"""
+    mem = request.app.state.mem
+    try:
+        # 先查出该项目全部 ID
+        existing = mem.store.get(where={"project_id": project_id}, include=["metadatas"])
+        ids = existing.get("ids", []) if existing else []
+        if len(ids) > 20000:
+            logger.warning("项目 %s 包含 %d 条记录，数量较大", project_id, len(ids))
+        if ids:
+            # 分批删除
+            batch_size = 500
+            for i in range(0, len(ids), batch_size):
+                batch = ids[i : i + batch_size]
+                mem.store.delete(batch)
+        _invalidate_projects_cache()
+        logger.info("项目 %s 已删除，清除 %d 条记录", project_id, len(ids))
+        return {"deleted": True, "count": len(ids)}
+    except Exception as e:
+        logger.error("删除项目 %s 失败: %s", project_id, e)
+        raise HTTPException(500, f"删除失败: {e}")
 
 
 # --- API: 系统状态 ---

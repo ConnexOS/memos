@@ -753,12 +753,23 @@ async function loadProjects() {
             opt.textContent = `${p.project_name} (${p.project_id})`;
             sel.appendChild(opt);
         });
-        if (data.current_project) {
-            const matched = [...sel.options].find(o => o.value === data.current_project);
-            if (matched) {
-                sel.value = data.current_project;
-                state.currentProject = data.current_project;
+        // 优先级链: localStorage → CWD → 第一个项目 → 空
+        const saved = localStorage.getItem('memos_default_project');
+        const candidates = [
+            saved,
+            data.current_project,
+            state.projects[0]?.project_id,
+        ];
+        let selected = null;
+        for (const pid of candidates) {
+            if (pid && [...sel.options].some(o => o.value === pid)) {
+                selected = pid;
+                break;
             }
+        }
+        if (selected) {
+            sel.value = selected;
+            state.currentProject = selected;
         }
         updateKbCountLabel();
     } catch (e) {
@@ -968,6 +979,12 @@ function updateConvBatchDeleteBtn() {
 
 document.getElementById('project-selector')?.addEventListener('change', function() {
     state.currentProject = this.value || null;
+    // 持久化默认项目
+    if (this.value) {
+        localStorage.setItem('memos_default_project', this.value);
+    } else {
+        localStorage.removeItem('memos_default_project');
+    }
     state.kb.page = 1;
     state.conv.page = 1;
     // 清空今日回顾旧数据
@@ -1172,18 +1189,39 @@ async function loadBackupList() {
     }
 }
 
+let _bdId = null;
+
 async function deleteBackupItem(backupId) {
     if (!backupId) { toast('无法删除：备份标识未知', 'danger'); return; }
-    if (!confirm('确定删除备份 "' + backupId + '"？此操作不可恢复。')) return;
+    _bdId = backupId;
+    document.getElementById('bd-name').textContent = backupId;
+    const btn = document.getElementById('bd-execute');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash me-1"></i>删除';
+    // 隐藏备份管理对话框，弹出确认删除对话框
+    bootstrap.Modal.getInstance(document.getElementById('backupModal'))?.hide();
+    new bootstrap.Modal(document.getElementById('backupDeleteModal')).show();
+}
+
+document.getElementById('bd-execute')?.addEventListener('click', async function() {
+    if (!_bdId) return;
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>删除中...';
     try {
-        await api('/api/backups/' + encodeURIComponent(backupId), {method: 'DELETE'});
-        toast('备份 "' + backupId + '" 已删除', 'success');
+        await api('/api/backups/' + encodeURIComponent(_bdId), {method: 'DELETE'});
+        bootstrap.Modal.getInstance(document.getElementById('backupDeleteModal'))?.hide();
+        toast('备份已删除', 'success');
+        // 重新打开备份管理并刷新列表
+        new bootstrap.Modal(document.getElementById('backupModal')).show();
         await loadBackupList();
         loadBackupStatus();
     } catch (e) {
         toast('删除失败: ' + e.message, 'danger');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-trash me-1"></i>删除';
     }
-}
+});
 
 function copyText(text) {
     navigator.clipboard.writeText(text).then(() => toast('已复制'), () => {});
@@ -3276,7 +3314,7 @@ async function loadConflictList() {
     var countEl = document.getElementById('conflict-modal-count');
     list.innerHTML = '<div class="text-muted small text-center py-3">加载中...</div>';
     try {
-        var data = await api('/api/conflicts?limit=100');
+        var data = await apiClient.request('/api/conflicts?limit=100');
         var pairs = data.pairs || [];
         var statEl = document.getElementById('stat-conflict');
         statEl.textContent = pairs.length;
@@ -3322,13 +3360,13 @@ async function loadConflictList() {
             html += '<div class="d-flex gap-1 mt-2 flex-wrap">';
             html += '<button class="btn btn-sm btn-outline-success" onclick="resolveConflict(\'' + pairId + '\',\'overwrite\')">覆盖旧记忆</button>';
             html += '<button class="btn btn-sm btn-outline-info" onclick="resolveConflict(\'' + pairId + '\',\'keep_both\')">保留两者</button>';
-            html += '<button class="btn btn-sm btn-outline-primary" onclick="editConflictMemory(\'' + pairId + '\',\'' + escHtmlAttr(nm.content || '') + '\')">修改新记忆</button>';
+            html += '<button class="btn btn-sm btn-outline-primary" data-edit-content="' + escHtmlAttr(nm.content || '') + '" onclick="editConflictMemory(\'' + pairId + '\',this)">修改新记忆</button>';
             html += '<button class="btn btn-sm btn-outline-danger" onclick="resolveConflict(\'' + pairId + '\',\'discard\')">放弃新记忆</button>';
             html += '</div></div></div>';
         }
         // 底部统计行
         try {
-            var statsData = await api('/api/conflicts/stats');
+            var statsData = await apiClient.request('/api/conflicts/stats');
             var decisions = statsData.decisions || {};
             var totalLogs = statsData.total || 0;
             if (totalLogs > 0) {
@@ -3370,23 +3408,33 @@ async function resolveConflict(pairId, action) {
     } catch(e) { console.error(e); }
 }
 
-async function editConflictMemory(pairId, content) {
-    // 弹出 prompt 输入框让用户修改内容
-    var newContent = prompt('修改新记忆内容：', content);
-    if (newContent === null || newContent.trim() === '') return;
+var _editConflictPairId = '';
+
+function editConflictMemory(pairId, btn) {
+    _editConflictPairId = pairId;
+    document.getElementById('edit-conflict-content').value = btn.getAttribute('data-edit-content') || '';
+    var modal = new bootstrap.Modal(document.getElementById('editConflictModal'));
+    modal.show();
+}
+
+document.getElementById('edit-confirm-btn')?.addEventListener('click', async function() {
+    var content = document.getElementById('edit-conflict-content').value.trim();
+    var pairId = _editConflictPairId;
+    if (!content) return;
     try {
         await api('/api/conflicts/' + pairId + '/resolve?action=edit', {
             method:'POST',
-            body: JSON.stringify({content: newContent.trim()}),
+            body: JSON.stringify({content: content}),
             headers: {'Content-Type': 'application/json'}
         });
+        bootstrap.Modal.getInstance(document.getElementById('editConflictModal')).hide();
         var card = document.getElementById('conflict-pair-' + pairId);
         if (card) card.remove();
         _conflictDirty = true;
         setTimeout(loadConflictList, 500);
         setTimeout(loadConflictCount, 500);
     } catch(e) { console.error(e); }
-}
+});
 
 // 弹窗关闭时自动刷新知识列表和统计
 document.getElementById('conflictModal')?.addEventListener('hidden.bs.modal', function() {
@@ -3411,7 +3459,7 @@ document.getElementById('conflict-refresh-btn')?.addEventListener('click', loadC
 // 加载冲突统计数（页面加载 + 定时轮询）
 async function loadConflictCount() {
     try {
-        var data = await api('/api/conflicts/count');
+        var data = await apiClient.request('/api/conflicts/count');
         var count = data.count || 0;
         var statEl = document.getElementById('stat-conflict');
         if (statEl) {
@@ -3778,6 +3826,149 @@ document.getElementById('dr-preview-btn')?.addEventListener('click', async funct
     }
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-eye me-1"></i>复制请求';
+});
+
+// --- 项目管理 ---
+let _pmDeletePid = null;
+let _pmDeleteName = '';
+
+async function openProjectManager() {
+    const modal = new bootstrap.Modal(document.getElementById('projectMgmtModal'));
+    modal.show();
+
+    document.getElementById('pm-loading').style.display = '';
+    document.getElementById('pm-content').style.display = 'none';
+
+    try {
+        const data = await api('/api/projects');
+        const projects = data.projects || [];
+        const tbody = document.getElementById('pm-table-body');
+        tbody.innerHTML = '';
+
+        // Sort: current project first, then by latest_time
+        projects.sort((a, b) => {
+            if (a.project_id === data.current_project) return -1;
+            if (b.project_id === data.current_project) return 1;
+            return (b.latest_time || 0) - (a.latest_time || 0);
+        });
+
+        for (const p of projects) {
+            const tr = document.createElement('tr');
+
+            // Name
+            const nameTd = document.createElement('td');
+            nameTd.textContent = p.project_name || p.project_id;
+            if (p.project_id === data.current_project) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-info ms-1';
+                badge.textContent = '当前';
+                nameTd.appendChild(badge);
+            }
+            tr.appendChild(nameTd);
+
+            // ID
+            const idTd = document.createElement('td');
+            idTd.className = 'text-muted small font-monospace';
+            idTd.textContent = p.project_id;
+            tr.appendChild(idTd);
+
+            // Type distribution
+            const typeTd = document.createElement('td');
+            typeTd.className = 'small';
+            const byType = p.by_type || {};
+            const typeEntries = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+            if (typeEntries.length > 0) {
+                typeTd.innerHTML = typeEntries
+                    .map(([k, v]) => `<span class="badge bg-secondary bg-opacity-10 text-secondary me-1">${k}: ${v}</span>`)
+                    .join(' ');
+            } else {
+                typeTd.innerHTML = '<span class="text-muted">（空）</span>';
+            }
+            tr.appendChild(typeTd);
+
+            // Actions
+            const actionTd = document.createElement('td');
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn btn-sm btn-outline-danger py-0';
+            delBtn.innerHTML = '<i class="bi bi-trash"></i>';
+            delBtn.title = '删除项目';
+            delBtn.onclick = () => confirmPmDelete(p.project_id, p.project_name || p.project_id);
+            actionTd.appendChild(delBtn);
+            tr.appendChild(actionTd);
+
+            tbody.appendChild(tr);
+        }
+    } catch (e) {
+        document.getElementById('pm-table-body').innerHTML =
+            '<tr><td colspan="4" class="text-danger text-center">加载失败: ' + e.message + '</td></tr>';
+    } finally {
+        document.getElementById('pm-loading').style.display = 'none';
+        document.getElementById('pm-content').style.display = '';
+    }
+}
+
+// --- 项目管理：删除确认 ---
+function confirmPmDelete(pid, name) {
+    _pmDeletePid = pid;
+    _pmDeleteName = name;
+
+    document.getElementById('pm-del-name').textContent = name;
+    document.getElementById('pm-del-id').textContent = pid;
+    document.getElementById('pm-del-stats').textContent = '加载中...';
+    document.getElementById('pm-del-confirm').value = '';
+    document.getElementById('pm-del-execute').disabled = true;
+
+    // 加载统计数据
+    api(`/api/projects/${pid}/stats`).then(stats => {
+        if (stats.total > 0) {
+            const parts = Object.entries(stats.by_type).map(([k, v]) => `${k}: ${v}`);
+            document.getElementById('pm-del-stats').textContent = `共 ${stats.total} 条 — ` + parts.join(' | ');
+        } else {
+            document.getElementById('pm-del-stats').textContent = '（空项目，无数据）';
+        }
+    }).catch(() => {
+        document.getElementById('pm-del-stats').textContent = '加载失败';
+    });
+
+    // 关闭项目管理大对话框，打开确认删除小对话框
+    bootstrap.Modal.getInstance(document.getElementById('projectMgmtModal'))?.hide();
+    const confirmModal = new bootstrap.Modal(document.getElementById('pmDeleteConfirmModal'));
+    confirmModal.show();
+}
+
+// 输入项目名匹配后启用删除按钮
+document.getElementById('pm-del-confirm')?.addEventListener('input', function() {
+    document.getElementById('pm-del-execute').disabled = this.value !== _pmDeleteName;
+});
+
+// 确认删除执行
+document.getElementById('pm-del-execute')?.addEventListener('click', async function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>删除中...';
+
+    try {
+        await api(`/api/projects/${_pmDeletePid}`, { method: 'DELETE' });
+        // 如果删除的是当前选中项目，重置
+        if (state.currentProject === _pmDeletePid) {
+            state.currentProject = null;
+            const saved = localStorage.getItem('memos_default_project');
+            if (saved === _pmDeletePid) localStorage.removeItem('memos_default_project');
+        }
+        // 关闭确认弹窗
+        bootstrap.Modal.getInstance(document.getElementById('pmDeleteConfirmModal'))?.hide();
+        // 刷新项目列表
+        await loadProjects();
+        // 刷新各面板
+        Promise.all([loadMemories(), loadConversations()]);
+        toast('项目已删除', 'success');
+        // 重新打开项目管理对话框
+        openProjectManager();
+    } catch (e) {
+        toast('删除失败: ' + e.message, 'danger');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-trash me-1"></i>确认删除';
+    }
 });
 
 init();

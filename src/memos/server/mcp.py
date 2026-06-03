@@ -16,16 +16,6 @@ from ..errors import ChromaDBError
 
 logger = logging.getLogger(__name__)
 
-# MCP 文件日志：写入 data/logs/mcp_server.log
-_log_dir = Path.cwd() / "data" / "logs"
-_log_dir.mkdir(parents=True, exist_ok=True)
-_fh = logging.FileHandler(_log_dir / "mcp_server.log", encoding="utf-8")
-_fh.setLevel(logging.DEBUG)
-_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-logger.addHandler(_fh)
-# 同时也让 memos 子包的其他 logger 写入文件
-logging.getLogger("memos").addHandler(_fh)
-
 mcp = FastMCP("长时记忆系统")
 
 _id_len = config.server.id_length
@@ -36,6 +26,17 @@ _trigger_rounds = config.buffer.trigger_rounds
 _default_project_id = hashlib.md5(str(Path.cwd()).encode()).hexdigest()[:_id_len]
 _default_project_name = Path.cwd().name
 _project_ctx = threading.local()
+
+# MCP 文件日志：统一写到 MEMOS 安装目录 data/logs/mcp_server_{project_id}.log
+_MEMOS_ROOT = Path(__file__).resolve().parents[3]
+_log_dir = _MEMOS_ROOT / "data" / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_fh = logging.FileHandler(_log_dir / f"mcp_server_{_default_project_id}.log", encoding="utf-8")
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+logger.addHandler(_fh)
+# 同时也让 memos 子包的其他 logger 写入文件
+logging.getLogger("memos").addHandler(_fh)
 
 
 def _get_project_id() -> str:

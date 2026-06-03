@@ -41,6 +41,7 @@ def ensure_memos_home() -> Path:
     (home / "etc").mkdir(parents=True, exist_ok=True)
     (home / "memdb").mkdir(parents=True, exist_ok=True)
     (home / "model").mkdir(parents=True, exist_ok=True)
+    (home / "data" / "logs").mkdir(parents=True, exist_ok=True)
     return home
 
 

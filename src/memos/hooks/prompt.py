@@ -332,28 +332,20 @@ def _match_manual_suggestions(current_msg: str, mem, pid: str) -> list[dict]:
     documents = results.get("documents", [])
     metadatas = results.get("metadatas", [])
     if not ids:
-        # Fallback: 尝试当前 CWD 项目 ID（兼容 Dashboard 创建的记录）
-        import hashlib as _hlib
-
-        default_pid = _hlib.md5(str(PROJECT_DIR).encode()).hexdigest()[:8]
-        if default_pid != pid:
-            try:
-                results = mem.store.get(
-                    where={
-                        "$and": [
-                            {"type": "manual_suggestion"},
-                            {"project_id": default_pid},
-                        ]
-                    },
-                    include=["documents", "metadatas"],
-                )
-                ids = results.get("ids", [])
-                documents = results.get("documents", [])
-                metadatas = results.get("metadatas", [])
-                if ids:
-                    logger.debug("管道三在 default project_id 下找到 %d 条", len(ids))
-            except Exception:
-                pass
+        # Fallback: 查找全部项目中已启用的手工建议（兼容 Always 模式跨项目生效）
+        logger.debug("管道三在 pid=%s 下未找到手工建议，尝试全项目查找", pid)
+        try:
+            results = mem.store.get(
+                where={"$and": [{"type": "manual_suggestion"}]},
+                include=["documents", "metadatas"],
+            )
+            ids = results.get("ids", [])
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            if ids:
+                logger.debug("管道三在全项目范围找到 %d 条手工建议", len(ids))
+        except Exception as e:
+            logger.warning("管道三全项目回退查询失败: %s", e)
 
     if not ids:
         return []
@@ -961,11 +953,10 @@ def _save_injected_records(pid: str, records: list) -> None:
     path = get_memos_home() / "etc" / f".injected_records_{pid}.json"
 
     if not records:
+        # 空记录时删除旧文件，避免 Dashboard 展示过时数据
         if path.exists():
             path.unlink()
-            logger.info("已清除旧的注入记录文件 %s", path)
-        else:
-            logger.debug("无 Layer 1 注入记录，跳过保存")
+            logger.debug("本轮无注入记录，已删除旧文件: %s", path)
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)

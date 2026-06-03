@@ -1,5 +1,6 @@
 # src/memos/web/middleware/project_context.py
 from fastapi import Request
+
 from ..utils import detect_project_id
 
 
@@ -18,9 +19,6 @@ class ProjectContextMiddleware:
             return
 
         request = Request(scope)
-        pid = (
-            request.query_params.get("project_id")
-            or detect_project_id()
-        )
+        pid = request.query_params.get("project_id") or detect_project_id()
         request.state.project_id = pid
         await self.app(scope, receive, send)

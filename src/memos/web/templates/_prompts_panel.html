@@ -135,6 +135,26 @@
             </div>
         </div>
 
+        <!-- ====== 修改新记忆弹窗 ====== -->
+        <div class="modal fade" id="editConflictModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h6 class="modal-title"><i class="bi bi-pencil-square me-1"></i>修改新记忆</h6>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="small text-secondary mb-2">在下方编辑框中修改新记忆内容，确认后将覆盖原记忆并解决冲突。</div>
+                        <textarea id="edit-conflict-content" class="form-control" rows="6" style="font-size:.875rem;resize:vertical"></textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-sm btn-primary" id="edit-confirm-btn">确认修改</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- ====== v0.4.1 趋势图表弹窗 ====== -->
         <div class="modal fade" id="trendModal" tabindex="-1">
             <div class="modal-dialog modal-lg modal-dialog-scrollable">

@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.9 "项目级管理" — 2026-06-03
+
+### Added
+
+- **项目管理对话框**
+  - Dashboard 新增"管理"按钮，打开全项目列表视图
+  - 展示项目名称、ID、按类型分布（badge 形式）、操作列
+  - 当前项目置顶，其余按活跃时间倒序
+
+- **项目数据删除**
+  - `DELETE /api/projects/{pid}` 端点，幂等删除指定项目全部数据
+  - `GET /api/projects/{pid}/stats` 端点，查询项目数据分布概览
+  - 删除前输入项目名二次确认，不可撤销
+
+- **默认项目持久化**
+  - 项目切换自动保存到 localStorage
+  - 页面刷新按 localStorage → CWD → 第一个项目 优先级自动选中
+
+### Changed
+
+- **备份删除体验改进**
+  - 原生 `confirm()` 替换为 Bootstrap 模态框确认
+  - 删除按钮增加 loading spinner 动画，防止重复点击
+  - 与项目管理删除流程一致的交互体验
+
+- **项目列表接口增强**
+  - `GET /api/projects` 返回每个项目的 `by_type` 字段，前端一次查询即可获取全部分布数据
+
+### Fixed
+
+- **项目删除端点 limit 截断**
+  - `DELETE /api/projects/{pid}` 和 `GET /api/projects/{pid}/stats` 移除 `limit=10000` 硬限制
+  - 修复：数据量超过 1 万条时删除不完整、统计不准确的问题
+
+### Internal
+
+- `_get_projects_from_db()` 增加 `by_type` 计数器
+- ruff 格式检查和修复（4 文件）
+
 ## v0.4.8 "稳健维护" — 2026-05-31
 
 ### Added

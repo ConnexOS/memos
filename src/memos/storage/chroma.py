@@ -15,15 +15,21 @@ logger = logging.getLogger(__name__)
 
 # 受保护的生产集合名，禁止无意识写入测试数据
 _PROTECTED_COLLECTIONS = {"project_memory"}
-# 审计日志路径
-_AUDIT_LOG = Path("./memdb/audit.log")
+
+
+def _audit_log_path() -> Path:
+    """审计日志路径：统一到 MEMOS_HOME，避免在每个 CWD 下创建独立日志。"""
+    from ..config.models import get_memos_home
+
+    return get_memos_home() / "data" / "logs" / "audit.log"
 
 
 def _log_audit(record: dict):
     """将破坏性操作写入审计日志文件（追加模式）"""
     try:
-        _AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(_AUDIT_LOG, "a", encoding="utf-8") as f:
+        path = _audit_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.error("写入审计日志失败: %s", e)

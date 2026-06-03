@@ -481,6 +481,7 @@ class MemoryExtractor:
                     new_content,
                     top_k=3,
                     project_id=self.project_id,
+                    where={"type": {"$in": ["fact", "decision", "preference"]}},
                 )
                 candidates = [
                     s
@@ -675,6 +676,7 @@ class MemoryExtractor:
         return elapsed >= RATE_LIMIT_SECONDS
 
     def _persist_raw_conversation(self, user_msg: str, assistant_msg: str):
+        """后台异步持久化原始对话。embedding 编码（~500ms）不阻塞 MCP 响应。"""
         if not self.memory:
             return
         meta = {
@@ -686,13 +688,23 @@ class MemoryExtractor:
         if self.project_id:
             meta["project_id"] = self.project_id
             meta["project_name"] = self.project_name
-        self.memory.remember(f"用户: {user_msg}\n助手: {assistant_msg}", metadata=meta)
+        text = f"用户: {user_msg}\n助手: {assistant_msg}"
+        t = threading.Thread(target=self._do_persist_conversation, args=(text, meta), daemon=True)
+        t.start()
+
+    def _do_persist_conversation(self, text: str, meta: dict):
+        """实际执行 embedding + ChromaDB 写入的线程目标。"""
+        try:
+            self.memory.remember(text, metadata=meta)
+        except Exception as e:
+            logger.error("原始对话持久化失败: %s", e)
 
     def append_conversation(self, role: str, content: str) -> bool:
         """追加对话到缓冲区，满 TRIGGER_ROUNDS 条后在后台自动提炼。
         返回 True 表示已触发提炼，False 表示仍在累积。"""
         turn = f"{role}: {content}"
         merged = None
+        persist_pair = None  # (user_msg, assistant_msg) 在锁外持久化，避免阻塞
         with self._lock:
             self.conversation_buffer.append(turn)
             self._truncate_buffer()
@@ -700,7 +712,7 @@ class MemoryExtractor:
             if role == "user":
                 self._pending_user_msg = content
             elif role == "assistant" and self._pending_user_msg is not None:
-                self._persist_raw_conversation(self._pending_user_msg, content)
+                persist_pair = (self._pending_user_msg, content)
                 self._pending_user_msg = None
 
             if len(self.conversation_buffer) >= TRIGGER_ROUNDS and self._can_extract():
@@ -712,6 +724,10 @@ class MemoryExtractor:
                     self._extracting = True  # 在锁内原子设置，消除 TOCTOU 竞态
                     merged = "\n".join(self.conversation_buffer)
                     self.conversation_buffer.clear()
+
+        # P0-5 修复: embedding + ChromaDB 写入在锁外执行，避免长时阻塞
+        if persist_pair is not None:
+            self._persist_raw_conversation(persist_pair[0], persist_pair[1])
 
         if merged is not None:
             self._extract_in_background(merged)

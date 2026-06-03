@@ -78,8 +78,10 @@ def _get_projects_from_db(mem: "ContextMemory") -> list[dict]:
     for meta in result["metadatas"]:
         pid = meta.get("project_id", detect_project_id())
         is_kb = meta.get("type") in _KB_TYPES
+        t = meta.get("type", "unknown")
         if pid in project_map:
             project_map[pid]["memory_count"] += 1
+            project_map[pid]["by_type"][t] = project_map[pid]["by_type"].get(t, 0) + 1
             if is_kb:
                 project_map[pid]["knowledge_count"] += 1
             ts = meta.get("timestamp", 0)
@@ -94,6 +96,7 @@ def _get_projects_from_db(mem: "ContextMemory") -> list[dict]:
                 "project_name": pname,
                 "memory_count": 1,
                 "knowledge_count": 1 if is_kb else 0,
+                "by_type": {t: 1},
                 "latest_time": meta.get("timestamp", 0),
             }
     projects = sorted(project_map.values(), key=lambda x: -x["latest_time"])
@@ -122,9 +125,7 @@ async def _todo_reminder_loop(app: FastAPI):
 
             mem = app.state.mem
             current_pid = detect_project_id()
-            pending = mem.count_memories(
-                where={"type": "todo", "todo_status": "pending", "project_id": current_pid}
-            )
+            pending = mem.count_memories(where={"type": "todo", "todo_status": "pending", "project_id": current_pid})
             if pending > 0:
                 notifier = get_notification_logger()
                 notifier.notify(
@@ -226,7 +227,8 @@ app = FastAPI(title="长时记忆系统仪表板", lifespan=lifespan)
 
 # Middleware order (LIFO): ProjectContext(extract pid, 1st) -> Auth(authenticate, 2nd) -> routes
 app.add_middleware(AuthASGIMiddleware)
-from .middleware.project_context import ProjectContextMiddleware
+from .middleware.project_context import ProjectContextMiddleware  # noqa: E402
+
 app.add_middleware(ProjectContextMiddleware)
 
 

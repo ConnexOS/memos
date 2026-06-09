@@ -68,18 +68,18 @@ Reload Claude Code — the MCP tools and Hook are ready.
 ```mermaid
 graph TB
     subgraph "Claude Code (Client)"
-        CC[Claude Code]
-        HOOK[Hook Agent<br/>hook_proxy]
+        CC("Claude Code")
+        HOOK["Hook Agent (hook_proxy)"]
     end
 
     subgraph "MEMOS Unified Server"
         direction TB
-        MCP[MCP SSE<br/>/mcp/{pid}/sse]
-        HAPI[Hook API<br/>/api/hooks/*]
-        DASH[Dashboard<br/>/ + /api/*]
-        AUTH[Auth Layer<br/>SessionAuthStore]
-        ENGINE[Engine<br/>Retrieval + Extraction]
-        STORE[(ChromaDB)]
+        MCP["MCP SSE (/mcp/{pid}/sse)"]
+        HAPI["Hook API (/api/hooks/*)"]
+        DASH["Dashboard (/ + /api/*)"]
+        AUTH["Auth Layer (SessionAuthStore)"]
+        ENGINE["Engine (Retrieval + Extraction)"]
+        STORE["(ChromaDB)"]
     end
 
     CC -->|SSE + Token| MCP

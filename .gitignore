@@ -54,3 +54,15 @@ etc/auth_key.txt
 # IDE
 .vs/
 .ruff_cache/
+etc/users.json
+etc/.injected_records_*.json
+etc/.session_marker.json
+etc/prompts.zip
+*.bat
+*.ps1
+fix_tests.py
+inspect_test.py
+recover_file.py
+install.ps1
+install.sh
+requirements.txt

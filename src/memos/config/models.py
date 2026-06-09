@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -273,10 +274,7 @@ PROMPT_TEMPLATE_TYPES = ("extract", "daily-review", "conflict", "todo-extract", 
 
 
 class ChromaConfig(BaseModel):
-    mode: str = "persistent"
     path: str = Field(default_factory=_default_chroma_path)
-    host: str = "localhost"
-    port: int = 8001
     collection_name: str = "project_memory"
     timeout: int = 30
 
@@ -591,8 +589,6 @@ class BufferConfig(BaseModel):
 
 
 class DashboardConfig(BaseModel):
-    host: str = "127.0.0.1"
-    port: int = 8000
     locale: str = "zh"
     status_cache_ttl: int = 15
     projects_cache_ttl: int = 30
@@ -607,9 +603,20 @@ class DashboardConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
+    """v0.5.0 扩展：添加 mode/host/port 字段"""
+
     id_length: int = 8
     mcp_top_k_max: int = 20
     response_truncate_length: int = 100
+    mode: Literal["unified"] = "unified"  # v0.5.0 仅支持 unified 模式
+    host: str = "127.0.0.1"  # 新增
+    port: int = 8000  # 新增
+
+
+class HookProxyConfig(BaseModel):
+    """Hook 代理端配置（v0.5.0 新增，server_url 已改为从 server.port 派生）"""
+
+    timeout: int = Field(default=60, ge=1)
 
 
 class AuthConfig(BaseModel):

@@ -23,7 +23,7 @@ def list_conflicts(request: Request, limit: int = 50, project_id: str = Depends(
     """获取待处理冲突配对列表（合并同一冲突的两条记忆）"""
     import time as time_mod
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     results = mem.list_memories(
         where={"conflict_status": "pending"},
         project_id=project_id,
@@ -132,7 +132,7 @@ def list_conflicts(request: Request, limit: int = 50, project_id: str = Depends(
 @router.get("/api/conflicts/count")
 def count_conflicts(request: Request, project_id: str = Depends(get_project_id)):
     """待处理冲突数量（供首页徽标）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         all_pending = mem.list_memories(where={"conflict_status": "pending"}, project_id=project_id, limit=500)
         return {"count": len(all_pending)}
@@ -167,7 +167,7 @@ def _write_conflict_log(
 
 def _get_conflict_pair(request: Request, pair_id: str) -> tuple[dict, dict]:
     """根据 new_memory_id 查找冲突配对的两条记忆。返回 (new_memory, existing_memory)。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     new_mem = mem.get_memory(pair_id)
     if new_mem is None:
         raise HTTPException(404, f"冲突记录未找到: {pair_id[:8]}")
@@ -207,7 +207,7 @@ async def resolve_conflict(request: Request, pair_id: str, action: str = ""):
         if not content:
             raise HTTPException(400, "edit 操作需要提供 content")
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     new_mem, existing_mem = _get_conflict_pair(request, pair_id)
     new_meta = new_mem.get("metadata", {})
 
@@ -273,7 +273,7 @@ def discard_conflict(request: Request, pair_id: str):
     """放弃新记忆：删除触发冲突的新记忆，保留旧记忆"""
     import time as time_mod
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     new_mem, existing_mem = _get_conflict_pair(request, pair_id)
     new_meta = new_mem.get("metadata", {})
 
@@ -313,7 +313,7 @@ def discard_conflict(request: Request, pair_id: str):
 @router.get("/api/conflicts/stats")
 def conflict_stats(request: Request, project_id: str = Depends(get_project_id)):
     """冲突决策统计（聚合 decision 分布）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         logs = mem.list_memories(where={"type": "conflict_log"}, project_id=project_id, limit=500)
     except Exception:
@@ -424,7 +424,7 @@ def extract_todos_from_review(request: Request, body: dict, project_id: str = De
         return {"todos": [], "total": 0, "skipped": 0, "message": "未提取到待办事项"}
 
     # 去重 + 批量写入
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pname = _Path.cwd().name
     todos = []
     skipped = 0
@@ -487,7 +487,7 @@ def usage_stats(request: Request, period: str = "today", endpoint: str = "all", 
     """获取用量统计数据。卡片数按 source 真实统计（保存数，非提炼调用数）。"""
     from ...features.usage import usage_logger
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     stats = usage_logger.get_stats(period=period, endpoint=endpoint, memory=mem, project_id=project_id)
     return stats
 
@@ -506,7 +506,7 @@ def usage_trend(request: Request, days: int = 7):
 
 @router.get("/api/projects")
 def list_projects(request: Request):
-    projects = _get_projects_from_db(request.app.state.mem)
+    projects = _get_projects_from_db(request.app.state.context_memory)
     return {"projects": projects, "current_project": detect_project_id(), "current_project_name": Path.cwd().name}
 
 
@@ -518,7 +518,7 @@ def get_project_stats(project_id: str, request: Request):
     """获取指定项目的数据统计概览（按类型分布）"""
     from collections import Counter
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         result = mem.store.get(where={"project_id": project_id}, include=["metadatas"])
     except Exception:
@@ -533,7 +533,7 @@ def get_project_stats(project_id: str, request: Request):
 @router.delete("/api/projects/{project_id}")
 def delete_project(project_id: str, request: Request):
     """删除指定项目的全部数据。幂等——项目已空或不存在也返回成功。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         # 先查出该项目全部 ID
         existing = mem.store.get(where={"project_id": project_id}, include=["metadatas"])
@@ -559,7 +559,7 @@ def delete_project(project_id: str, request: Request):
 
 @router.get("/api/status")
 async def system_status(request: Request):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     llama_ok = await _get_llama_status()
     try:
         total = mem.store.count()
@@ -592,7 +592,7 @@ async def system_status(request: Request):
 @router.post("/api/vacuum")
 def trigger_vacuum(request: Request):
     """手动触发数据库 VACUUM，回收已删除文档的磁盘空间。返回执行前后文件大小。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     db_path = Path(config.chroma.path) / "chroma.sqlite3"
     if not db_path.exists():
         raise HTTPException(400, "数据库文件不存在")

@@ -382,6 +382,4 @@ class ChromaDBHttpStore(VectorStore):
 
 
 def create_store(collection_name: str = None) -> VectorStore:
-    if config.chroma.mode == "http":
-        return ChromaDBHttpStore(collection_name)
     return ChromaDBPersistentStore(collection_name)

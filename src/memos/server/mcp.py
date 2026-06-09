@@ -1,3 +1,4 @@
+import contextvars
 import hashlib
 import json
 import logging
@@ -13,10 +14,14 @@ from ..config import config
 from ..engine.extractor import MemoryExtractor
 from ..engine.memory import ContextMemory
 from ..errors import ChromaDBError
+from ..web.auth import _resolve_creator_id
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("长时记忆系统")
+
+# project_id 合法格式（与 set_project_id MCP 工具一致，供 sse_wrapper 复用）
+_PID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 
 _id_len = config.server.id_length
 _trunc = config.server.response_truncate_length
@@ -25,7 +30,49 @@ _trigger_rounds = config.buffer.trigger_rounds
 
 _default_project_id = hashlib.md5(str(Path.cwd()).encode()).hexdigest()[:_id_len]
 _default_project_name = Path.cwd().name
-_project_ctx = threading.local()
+_project_id_ctx: contextvars.ContextVar = contextvars.ContextVar("project_id", default="")
+_auth_token_ctx: contextvars.ContextVar = contextvars.ContextVar("auth_token", default="")
+
+
+class SessionAuthStore:
+    """线程安全 session_id → token 映射，支持 TTL 过期。"""
+
+    def __init__(self, ttl_seconds: int = 1800):
+        self._store: dict[str, tuple[str, float]] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+
+    def put(self, session_id: str, token: str) -> None:
+        with self._lock:
+            self._store[session_id] = (token, time.monotonic())
+
+    def get(self, session_id: str) -> str | None:
+        with self._lock:
+            entry = self._store.get(session_id)
+            if entry is None:
+                return None
+            token, ts = entry
+            if time.monotonic() - ts > self._ttl:
+                del self._store[session_id]
+                return None
+            # 刷新时间戳（活跃 session 续期）
+            self._store[session_id] = (token, time.monotonic())
+            return token
+
+    def cleanup(self) -> int:
+        """清理所有过期 session，返回清理数量。"""
+        now = time.monotonic()
+        removed = 0
+        with self._lock:
+            expired = [sid for sid, (_, ts) in self._store.items() if now - ts > self._ttl]
+            for sid in expired:
+                del self._store[sid]
+                removed += 1
+        return removed
+
+
+# 全局单例
+_session_auth_store = SessionAuthStore(ttl_seconds=1800)
 
 # MCP 文件日志：统一写到 MEMOS 安装目录 data/logs/mcp_server_{project_id}.log
 _MEMOS_ROOT = Path(__file__).resolve().parents[3]
@@ -40,7 +87,23 @@ logging.getLogger("memos").addHandler(_fh)
 
 
 def _get_project_id() -> str:
-    return getattr(_project_ctx, "project_id", _default_project_id)
+    return _project_id_ctx.get() or _default_project_id
+
+
+def _set_session_project_id(pid: str, project_name: str = None) -> None:
+    """设置当前会话的 project_id 到 context var。
+
+    由 ProjectAwareSSEWrapper（URL 路径提取）和 set_project_id（MCP 工具）调用。
+    context var 在 Starlette 异步 task 级隔离，不同请求互不干扰。
+
+    注意：不再直接修改 _extractor_instance.project_id（避免并发竞态）。
+    改为在 _get_extractor() 中从 context var 同步，确保每次获取 extractor
+    时 project_id 与当前请求一致。
+    """
+    _project_id_ctx.set(pid)
+    if project_name:
+        _register_project_name(pid, project_name)
+        _project_name_ctx.set(project_name)
 
 
 def _detect_project_id() -> str:
@@ -51,6 +114,39 @@ def _resolve_pid(override: str = None) -> str:
     return override or _get_project_id()
 
 
+# project_id → 项目名映射（由 ProjectAwareSSEWrapper 从 SSE URL ?name= 注册）
+# 供 save_knowledge / remember 写入正确的 project_name metadata
+_MAX_REGISTRY_SIZE = 1000
+_project_name_registry: dict[str, str] = {}
+_project_name_registry_lock = threading.Lock()
+
+
+def _register_project_name(pid: str, name: str) -> None:
+    with _project_name_registry_lock:
+        if len(_project_name_registry) >= _MAX_REGISTRY_SIZE and pid not in _project_name_registry:
+            logger.warning("_project_name_registry 已达上限 %d，跳过注册 %s", _MAX_REGISTRY_SIZE, pid)
+            return
+        _project_name_registry[pid] = name
+
+
+_project_name_ctx: contextvars.ContextVar = contextvars.ContextVar("project_name", default="")
+
+
+def _get_project_name(pid: str) -> str:
+    # 优先：per-request 上下文（由 SSE wrapper 或 set_project_id 设置）
+    name = _project_name_ctx.get()
+    if name:
+        return name
+    # 次优：全局注册表（由 SSE wrapper 从 SSE URL ?name= 注册）
+    name = _project_name_registry.get(pid)
+    if name:
+        return name
+    # 默认项目匹配
+    if pid == _default_project_id:
+        return _default_project_name
+    return ""
+
+
 _memory_instance = None
 _extractor_instance = None
 _init_lock = threading.Lock()
@@ -58,34 +154,42 @@ _init_lock = threading.Lock()
 
 def _ensure_initialized():
     global _memory_instance, _extractor_instance
-    if _memory_instance is not None:
+    if _memory_instance is not None and _extractor_instance is not None:
         return
     with _init_lock:
-        if _memory_instance is not None:
+        if _memory_instance is not None and _extractor_instance is not None:
             return
         try:
             # 支持环境变量覆盖 collection 名（主要用于测试隔离）
             test_collection = os.environ.get("MEMOS_TEST_COLLECTION")
-            _memory_instance = ContextMemory(collection_name=test_collection)
-            _extractor_instance = MemoryExtractor(
-                memory_system=_memory_instance,
-                project_id=_default_project_id,
-                project_name=_default_project_name,
-            )
+            if _memory_instance is None:
+                _memory_instance = ContextMemory(collection_name=test_collection)
+            if _extractor_instance is None:
+                # 统一模式下 _memory_instance 由 set_memory() 注入，此处只创建 extractor
+                _extractor_instance = MemoryExtractor(
+                    memory_system=_memory_instance,
+                    project_id=_default_project_id,
+                    project_name=_default_project_name,
+                )
         except Exception as e:
             logger.error("MCP 初始化失败: %s", e)
             raise ChromaDBError(f"MCP 服务初始化失败: {e}", detail=str(e)) from e
 
 
 def _get_memory() -> ContextMemory:
+    """获取 ContextMemory 实例"""
+    global _memory_instance
+    if _memory_instance is not None:
+        return _memory_instance
     _ensure_initialized()
-    # v0.4.7: 验证 collection 仍有效（reindex 可能重建了 collection 导致 UUID 变更）
-    try:
-        _memory_instance.store.count()
-    except Exception:
-        logger.warning("ChromaDB collection 连接失效，尝试重建...")
-        _reset_for_test()
-        _ensure_initialized()
+    # 健康检查：验证 ChromaDB store 仍可用
+    if _memory_instance is not None:
+        try:
+            _memory_instance.store.count()
+        except Exception:
+            logger.warning("ChromaDB store 连接异常，尝试重建")
+            _memory_instance = None
+            _ensure_initialized()
     return _memory_instance
 
 
@@ -100,7 +204,20 @@ def _reset_for_test(collection_name: str = None):
 
 
 def _get_extractor() -> MemoryExtractor:
+    """获取 MemoryExtractor 实例，同步当前请求的 project_id。
+
+    每次调用时从 context var 同步 project_id，避免并发 SSE 会话间的竞态。
+    后台提炼线程可能在同步后读取，但提炼由当前请求触发，时序上安全。
+    """
     _ensure_initialized()
+    if _extractor_instance is not None:
+        pid = _get_project_id()
+        if pid and pid != _extractor_instance.project_id:
+            _extractor_instance.project_id = pid
+            # 同步 project_name：优先使用注册名，否则回退到 pid
+            pname = _project_name_registry.get(pid)
+            if pname:
+                _extractor_instance.project_name = pname
     return _extractor_instance
 
 
@@ -120,6 +237,8 @@ ALLOWED_METADATA_KEYS = {
     "completed_at",
     "cancelled_at",
     "status_history",
+    "creator_id",
+    "scope",
 }
 
 
@@ -141,6 +260,10 @@ def remember(text: str, metadata: dict = None) -> str:
         # v0.4.8: type=todo 告警，引导使用 create_todo
         if metadata.get("type") == "todo":
             logger.warning("remember 收到 type=todo，建议改用 create_todo 工具创建待办")
+    if metadata is None:
+        metadata = {}
+    metadata.setdefault("scope", "team")
+    metadata["creator_id"] = _resolve_creator_id(from_ctx=True)
     ext = _get_extractor()
     triggered = ext.buffer_remember(text)
     if triggered:
@@ -171,6 +294,8 @@ def recall(
     else:
         where = {"type": {"$in": knowledge_types}}
     try:
+        _creator_id = _resolve_creator_id(from_ctx=True)
+        _scope = _creator_id not in ("", "unknown")
         results = _get_memory().recall(
             query,
             min(top_k, _top_k_max),
@@ -179,6 +304,8 @@ def recall(
             project_id=pid,
             hybrid=hybrid,
             bm25_weight=bm25_weight,
+            creator_id=_creator_id if _scope else None,
+            ignore_scope=not _scope,
         )
     except Exception as e:
         logger.warning("recall 查询失败（B3 降级）: %s", e)
@@ -211,8 +338,16 @@ def list_memories(
         exclude_types = []
     if type_filter is None:
         type_filter = list(_VALID_KNOWLEDGE_TYPES)
+    _creator_id = _resolve_creator_id(from_ctx=True)
+    _scope = _creator_id not in ("", "unknown")
     items = _get_memory().list_memories(
-        project_id=pid, type_filter=type_filter, limit=limit, offset=offset, exclude_types=exclude_types
+        project_id=pid,
+        type_filter=type_filter,
+        limit=limit,
+        offset=offset,
+        exclude_types=exclude_types,
+        creator_id=_creator_id if _scope else None,
+        ignore_scope=not _scope,
     )
     if not items:
         return "暂无记忆。"
@@ -224,17 +359,21 @@ def list_memories(
 
 
 @mcp.tool()
-def set_project_id(pid: str) -> str:
-    """设置当前会话的项目 ID，用于记忆隔离。仅允许字母数字+连字符+下划线，最长 64 字符。"""
+def set_project_id(pid: str, project_name: str = None) -> str:
+    """设置当前会话的项目 ID，用于记忆隔离。仅允许字母数字+连字符+下划线，最长 64 字符。
+
+    Args:
+        pid: 项目 ID
+        project_name: 可选的项目可读名称，用于 Dashboard 显示
+    """
     if not pid or not pid.strip():
         return "参数错误: project_id 不能为空"
     pid = pid.strip()
     if len(pid) > 64:
         return f"参数错误: project_id 过长（{len(pid)} 字符，上限 64）"
-    if not re.match(r"^[a-zA-Z0-9_\-]+$", pid):
-        return "参数错误: project_id 仅允许字母、数字、下划线和连字符"
-    _project_ctx.project_id = pid
-    _get_extractor().project_id = pid
+    if not _PID_PATTERN.match(pid):
+        return "参数错误: project_id 仅允许字母、数字、下划线、连字符，1-64 字符"
+    _set_session_project_id(pid, project_name)
     return f"项目 ID 已设置为: {pid}"
 
 
@@ -243,8 +382,12 @@ def log_complete_turn(user_message: str, assistant_message: str) -> str:
     """记录一轮完整对话（用户消息+助手回复），累积多轮后自动提炼"""
     if len(user_message) > MAX_INPUT_LENGTH or len(assistant_message) > MAX_INPUT_LENGTH:
         return f"消息文本过长（上限 {MAX_INPUT_LENGTH} 字符），请精简后重试。"
-    _get_extractor().append_conversation("user", user_message)
-    _get_extractor().append_conversation("assistant", assistant_message)
+    _get_extractor().append_conversation(
+        "user", user_message, scope="personal", creator_id=_resolve_creator_id(from_ctx=True)
+    )
+    _get_extractor().append_conversation(
+        "assistant", assistant_message, scope="personal", creator_id=_resolve_creator_id(from_ctx=True)
+    )
     buf_size = len(_get_extractor().conversation_buffer)
     return f"已记录本轮对话。缓冲区现有 {buf_size} 轮，满 {_trigger_rounds} 轮后自动提炼。"
 
@@ -292,8 +435,10 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
     meta = {
         "type": type,
         "project_id": _get_project_id(),
-        "project_name": _default_project_name,
+        "project_name": _get_project_name(_get_project_id()),
         "source": "user_instructed",
+        "scope": "team",
+        "creator_id": _resolve_creator_id(from_ctx=True),
         "quality_score": 1.0,
         "quality_reason": "用户直写",
     }
@@ -394,8 +539,10 @@ def _save_manual_suggestion(text: str, metadata: dict) -> str:
     meta = {
         "type": "manual_suggestion",
         "project_id": _get_project_id(),
-        "project_name": _default_project_name,
+        "project_name": _get_project_name(_get_project_id()),
         "source": "user_instructed",
+        "scope": "personal",
+        "creator_id": _resolve_creator_id(from_ctx=True),
         "trigger_keywords": json.dumps(trigger_keywords),
         "trigger_mode": trigger_mode,
         "priority": priority,
@@ -510,6 +657,7 @@ def create_todo(content: str, priority: str = "medium", due_date: str = "") -> s
         "priority": priority,
         "active": True,
         "project_id": _get_project_id(),
+        "project_name": _get_project_name(_get_project_id()),
         "source": "mcp",
         "status_history": json.dumps([]),
         "sort_order": now,
@@ -517,6 +665,9 @@ def create_todo(content: str, priority: str = "medium", due_date: str = "") -> s
     }
     if due_date:
         metadata["due_date"] = due_date
+
+    metadata.setdefault("scope", "personal")
+    metadata["creator_id"] = _resolve_creator_id(from_ctx=True)
 
     mid = mem.remember(content, metadata=metadata)
     if mid is None:
@@ -534,10 +685,14 @@ def list_todos(todo_status: str = "pending", limit: int = 10, project_id_overrid
     pid = _resolve_pid(project_id_override)
     mem = _get_memory()
 
+    _creator_id = _resolve_creator_id(from_ctx=True)
+    _scope = _creator_id not in ("", "unknown")
     results = mem.list_todos(
         project_id=pid,
         todo_status=todo_status,
         limit=min(limit, 200),
+        creator_id=_creator_id if _scope else None,
+        ignore_scope=not _scope,
     )
 
     todos = []
@@ -630,6 +785,7 @@ def update_todo(memory_id: str, todo_status: str) -> str:
     return f"待办状态已从 {current} 变更为 {todo_status}"
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    mcp.run()
+def set_memory(memory):
+    """由 server/app.py lifespan 注入 ContextMemory 单例（unified 模式）"""
+    global _memory_instance
+    _memory_instance = memory

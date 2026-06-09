@@ -154,7 +154,7 @@ def list_suggestions(
     else:
         types_list = ["active_push", "system_alert"]  # 默认同时返回待处理知识匹配和系统提醒
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     where = _build_suggestion_query(pid, status=status, suggestion_types=types_list)
@@ -200,7 +200,7 @@ def list_suggestions(
 @router.get("/api/suggestions/count")
 def count_pending_suggestions(request: Request, project_id: str = Depends(get_project_id)):
     """轻量计数查询 — 管道一待处理建议总数。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
     where = _build_suggestion_query(
         pid,
@@ -214,7 +214,7 @@ def count_pending_suggestions(request: Request, project_id: str = Depends(get_pr
 @router.post("/api/suggestions/{suggestion_id}/dismiss")
 def dismiss_suggestion(request: Request, suggestion_id: str, project_id: str = Depends(get_project_id)):
     """关闭单条建议。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
     if not results["ids"]:
@@ -236,7 +236,7 @@ def restore_suggestion(request: Request, suggestion_id: str, project_id: str = D
     manual_trigger（原人工建议）→ 恢复为 type=manual_suggestion 到「人工建议」；
     其他（active_push/system_alert）→ status=pending 到「待处理」。
     """
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
     if not results["ids"]:
@@ -268,7 +268,7 @@ def restore_suggestion(request: Request, suggestion_id: str, project_id: str = D
 @router.delete("/api/suggestions/history")
 def clear_suggestion_history(request: Request, project_id: str = Depends(get_project_id)):
     """物理删除当前项目的所有历史建议（status=dismissed）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     where = _build_suggestion_query(pid, status="dismissed", include_expired=True)
@@ -284,7 +284,7 @@ def clear_suggestion_history(request: Request, project_id: str = Depends(get_pro
 @router.delete("/api/suggestions/{suggestion_id}")
 def hard_delete_suggestion(request: Request, suggestion_id: str, project_id: str = Depends(get_project_id)):
     """硬删除建议记录（物理删除）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
     if not results["ids"]:
         raise HTTPException(404, "建议不存在")
@@ -298,7 +298,7 @@ def hard_delete_suggestion(request: Request, suggestion_id: str, project_id: str
 @router.post("/api/suggestions/dismiss-all")
 def dismiss_all_suggestions(request: Request, project_id: str = Depends(get_project_id)):
     """批量关闭当前项目的所有待处理建议。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     where = _build_suggestion_query(pid, status="pending", include_expired=True, suggestion_types=["active_push"])
@@ -322,7 +322,7 @@ def submit_suggestion_feedback(
     request: Request, suggestion_id: str, req: SuggestionFeedbackRequest, project_id: str = Depends(get_project_id)
 ):
     """提交反馈 — 更新 suggestion 状态 + 反哺源记忆 + 写入 feedback 记录。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     results = mem.store.get(ids=[suggestion_id], include=["documents", "metadatas"])
@@ -376,7 +376,7 @@ def submit_suggestion_feedback(
 @router.get("/api/suggestions/stats")
 def get_suggestion_stats(request: Request, days: int | None = None, project_id: str = Depends(get_project_id)):
     """建议统计，支持可选天数过滤（HIGH-002）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     # 构建基础过滤条件（仅管道一 active_push）
@@ -417,7 +417,7 @@ def get_injection_stats(
     project_id: str = Depends(get_project_id),
 ):
     """注入监控统计（S5）：三管道分布 + 采纳率趋势 + 源记忆排行 + 去重注入记录 + 活跃人工建议。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     pipeline_types = ["active_push", "manual_trigger", "system_alert"]
@@ -806,7 +806,7 @@ def create_manual_suggestion(
     request: Request, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)
 ):
     """创建手工建议（含 trigger_keywords json.dumps 序列化）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     # 验证每个关键词长度
@@ -819,6 +819,8 @@ def create_manual_suggestion(
     meta = {
         "type": "manual_suggestion",
         "project_id": pid,
+        "scope": "personal",
+        "creator_id": request.session.get("creator_id", "unknown") if hasattr(request, "session") else "unknown",
         "source": "dashboard",
         "trigger_keywords": json.dumps(req.trigger_keywords),
         "trigger_mode": req.trigger_mode,
@@ -850,7 +852,7 @@ def create_manual_suggestion(
 @router.get("/api/manual-suggestions")
 def list_manual_suggestions(request: Request, project_id: str = Depends(get_project_id)):
     """列出当前项目所有手工建议。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     results = mem.store.get(
@@ -903,7 +905,7 @@ def delete_manual_suggestion(request: Request, suggestion_id: str, project_id: s
     FIX: 原为硬删除（mem.store.delete），删除后记录消失无法查看。
     改为元数据更新：type → suggestion, suggestion_type → manual_trigger, status → dismissed。
     """
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
     if not results["ids"]:
@@ -929,7 +931,7 @@ def update_manual_suggestion(
     request: Request, suggestion_id: str, req: ManualSuggestionCreateRequest, project_id: str = Depends(get_project_id)
 ):
     """更新手工建议（用 remember 重建，保持 hit_count 不变）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
@@ -954,6 +956,10 @@ def update_manual_suggestion(
     new_meta = {
         "type": "manual_suggestion",
         "project_id": old_meta.get("project_id", pid),
+        "scope": old_meta.get("scope", "personal"),
+        "creator_id": old_meta.get(
+            "creator_id", request.session.get("creator_id", "unknown") if hasattr(request, "session") else "unknown"
+        ),
         "source": "dashboard",
         "trigger_keywords": json.dumps(req.trigger_keywords),
         "trigger_mode": req.trigger_mode,
@@ -984,7 +990,7 @@ def update_manual_suggestion(
 @router.put("/api/manual-suggestions/{suggestion_id}/toggle-disable")
 def toggle_manual_suggestion_disable(request: Request, suggestion_id: str, project_id: str = Depends(get_project_id)):
     """切换手工建议的临时失效/启用状态。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     results = mem.store.get(ids=[suggestion_id], include=["metadatas"])
     if not results["ids"]:
@@ -1218,7 +1224,7 @@ def reset_suggestion_settings():
 @router.get("/api/suggestions/preview")
 def preview_suggestion_threshold(request: Request, threshold: float = 0.60, project_id: str = Depends(get_project_id)):
     """预览阈值下预计匹配条数（最近 7 天记忆）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     # 查询最近 7 天、type 为知识类型的记忆

@@ -1,159 +1,41 @@
 {
   "chroma": {
     "mode": "persistent",
-    "path": "D:\\DevSpace\\MEMOS\\memdb",
+    "path": "./memdb",
     "host": "localhost",
     "port": 8001,
     "collection_name": "project_memory",
-    "timeout": 60
+    "timeout": 30
   },
   "model": {
-    "path": "D:\\DevSpace\\MEMOS\\model\\bge-large-zh-v1.5",
     "name": "bge-large-zh-v1.5",
     "vector_dim": 1024,
     "download_retries": 3,
-    "download_timeout": 600,
-    "verify_sha256": false
+    "download_timeout": 600
   },
   "llm": {
     "endpoints": [
       {
-        "name": "local-LLM",
+        "name": "default",
         "api_base": "http://localhost:11434/v1",
         "api_key": "",
-        "model": "Gemma-4-E4B-it-Q4_K_M",
-        "prompt_templates": {}
-      },
-      {
-        "name": "modelscope",
-        "api_base": "http://localhost:11434/v1",
-        "api_key": "",
-        "model": "deepseek-ai/DeepSeek-V4-Flash",
-        "prompt_templates": {}
-      },
-      {
-        "name": "deepseek-ai",
-        "api_base": "http://localhost:11434/v1",
-        "api_key": "",
-        "model": "deepseek-v4-flash",
-        "prompt_templates": {}
+        "model": ""
       }
     ],
-    "active": "deepseek-ai",
-    "temperature": 0.5,
+    "active": "default",
+    "temperature": 0.1,
     "max_tokens": 2048,
-    "request_timeout": 600,
-    "max_retries": 3,
-    "retry_base_delay": 1.0,
-    "stop": [
-      "<|im_end|>"
-    ],
-    "api_key": "your-api-key-here"
+    "request_timeout": 600
   },
   "memory": {
     "decay_lambda": 0.02,
     "similarity_threshold": 0.55,
-    "dedup_top_k": 1,
-    "default_top_k": 5,
-    "default_type": "fact",
-    "archive_days": 90,
-    "rerank_multiplier": 3,
-    "rerank_min_candidates": 30,
-    "quality_threshold": 0.5,
-    "conflict_detection_enabled": true,
-    "conflict_distance_threshold": 0.85,
-    "conflict_use_llm": true,
-    "daily_todo_time": "18:00",
-    "expiry_warn_days": 30,
-    "reuse_weight": 0.1,
-    "reuse_decay": 0.01,
-    "reuse_boost_cap": 0.5,
-    "default_status": "active",
-    "daily_review_chunk_tokens": 12000,
-    "daily_review_chunk_rounds": 30
+    "default_top_k": 5
   },
-  "suggestion": {
-    "enable_active_suggestions": true,
-    "active_suggestion_threshold": 0.65,
-    "context_injection_threshold": 0.5,
-    "context_max_items": 3,
-    "suggestion_cooldown_minutes": 30,
-    "suggestion_max_per_day": 10,
-    "suggestion_expiry_days": 7,
-    "suggestion_max_pending": 50,
-    "suggestion_display_limit": 20,
-    "suggestion_manual_daily_limit": 5,
-    "max_injection_per_round": 5
-  },
-  "buffer": {
-    "max_tokens": 3000,
-    "truncate_target": 2500,
-    "trigger_rounds": 5,
-    "rate_limit_seconds": 30,
-    "token_ratio": 0.75,
-    "async_mode": true,
-    "subprocess_timeout": 300
-  },
-  "dashboard": {
-    "host": "127.0.0.1",
-    "port": 8000,
-    "locale": "zh",
-    "status_cache_ttl": 30,
-    "projects_cache_ttl": 30,
-    "health_check_timeout": 10,
-    "test_connection_timeout": 5,
-    "search_default_top_k": 5,
-    "search_top_k_max": 50,
-    "search_default_decay": 0.02,
-    "search_default_bm25_weight": 0.7,
-    "list_default_limit": 20,
-    "list_limit_max": 100
-  },
-  "server": {
-    "id_length": 8,
-    "mcp_top_k_max": 20,
-    "response_truncate_length": 100
-  },
+  "buffer": {},
+  "dashboard": {},
+  "server": {},
   "auth": {
-    "disable": true,
-    "token_hash": "",
-    "secret_key": "",
-    "session_ttl": 86400
-  },
-  "backup": {
-    "target_dir": "backups",
-    "max_backups": 10,
-    "remind_after_days": 7,
-    "verify_after_backup": true
-  },
-  "notification": {
-    "retention_days": 30,
-    "rate_limit_minutes": 60
-  },
-  "system_suggestion": {
-    "enabled": true,
-    "daily_limit": 3,
-    "cooldown_hours": 24,
-    "triggers": {
-      "first_time_user": true,
-      "unrefined_rounds": true,
-      "low_quality_ratio": true,
-      "no_daily_review": true,
-      "inactive_project": true,
-      "expired_memories": true
-    }
-  },
-  "agent": {
-    "enabled": true,
-    "pattern_detection_enabled": true,
-    "daily_briefing_enabled": true,
-    "daily_briefing_time": "02:00",
-    "topic_cluster_window_days": 7,
-    "recurrence_threshold": 3,
-    "bug_match_similarity": 0.7,
-    "max_daily_briefing_items": 3,
-    "briefing_cooldown_hours": 24,
-    "signal_cooldown_hours": 6,
-    "max_active_signals": 5
+    "disable": false
   }
 }

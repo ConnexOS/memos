@@ -298,9 +298,14 @@ class ContextMemory:
         type_filter: str | list[str] = None,
         include_archived: bool = False,
         exclude_types: list[str] = None,
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ):
         """统一构建 ChromaDB where 条件，所有查询路径复用。
-        v0.4.4 P1-3: 合并 _build_where/list_memories/count_memories 三处重复逻辑。
+
+        creator_id + ignore_scope: M6 数据隔离 — 当 ignore_scope=False 且传入 creator_id 时，
+        自动追加 scope/creator_id 过滤，确保用户只能看到 team 范围或自己创建的 personal 数据。
+        默认 ignore_scope=True 保持向后兼容（legacy 模式无隔离）。
         """
         clauses = {}
         and_items = []
@@ -310,6 +315,19 @@ class ContextMemory:
                 and_items.extend(where["$and"])
             else:
                 clauses.update(where)
+
+        # M6 数据隔离：scope/creator_id 过滤（仅统一模式下启用）
+        # v0.5.1: {"scope": "team"} → {"scope": {"$ne": "personal"}} 兼容旧记录（缺少 scope 视为 team）
+        if not ignore_scope and creator_id:
+            and_items.append(
+                {
+                    "$or": [
+                        {"scope": {"$ne": "personal"}},
+                        {"creator_id": creator_id},
+                    ]
+                }
+            )
+
         if days_limit:
             clauses["timestamp"] = {"$gte": time.time() - days_limit * 86400}
         if project_id:
@@ -343,6 +361,8 @@ class ContextMemory:
         hybrid: bool = False,
         bm25_weight: float = None,
         return_scores: bool = False,
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ) -> list[str] | list[dict]:
         # --- 调用监控：调用方 + 时间戳 + 完整参数 ---
         _start = time.perf_counter()
@@ -379,7 +399,14 @@ class ContextMemory:
         results = self.store.query(
             query_embeddings=[query_vec],
             n_results=n_results,
-            where=self._build_where(where, days_limit, project_id, include_archived=include_archived),
+            where=self._build_where(
+                where,
+                days_limit,
+                project_id,
+                include_archived=include_archived,
+                creator_id=creator_id,
+                ignore_scope=ignore_scope,
+            ),
             include=include,
         )
         docs = results["documents"][0]
@@ -466,6 +493,8 @@ class ContextMemory:
         where: dict = None,
         days_limit: int = None,
         project_id: str = None,
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ) -> list[dict]:
         """返回 dict 列表，每项含 id/document/distance/metadata，供去重和冲突检测使用。"""
         _start = time.perf_counter()
@@ -488,7 +517,7 @@ class ContextMemory:
         results = self.store.query(
             query_embeddings=[query_vec],
             n_results=top_k,
-            where=self._build_where(where, days_limit, project_id),
+            where=self._build_where(where, days_limit, project_id, creator_id=creator_id, ignore_scope=ignore_scope),
             include=["documents", "distances", "metadatas"],
         )
         ids = results["ids"][0]  # ChromaDB query 始终返回 ids，无需显式 include
@@ -527,6 +556,8 @@ class ContextMemory:
         include_archived: bool = False,
         where: dict = None,  # v0.4.1: 附加 ChromaDB where 过滤条件
         exclude_types: list[str] = None,  # v0.4.8: 排除指定类型
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ) -> list[dict]:
         if limit is None:
             limit = config.dashboard.list_default_limit
@@ -537,6 +568,8 @@ class ContextMemory:
             type_filter=type_filter,
             include_archived=include_archived,
             exclude_types=exclude_types,
+            creator_id=creator_id,
+            ignore_scope=ignore_scope,
         )
 
         # v0.4.4 P2-7: 合并 supports_offset 两分支——当前均全量拉取后内存分页，逻辑一致
@@ -545,9 +578,24 @@ class ContextMemory:
         if meta_count == 0 or offset >= meta_count:
             return []
 
-        # 按时间戳降序排列
+        # 按时间戳降序排列（兼容混合类型：float/int/str 统一转 float）
+        def _normalize_ts(v):
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str):
+                try:
+                    from datetime import datetime
+
+                    return datetime.fromisoformat(v).timestamp()
+                except (ValueError, TypeError):
+                    return 0.0
+            return 0.0
+
         sorted_pairs = sorted(
-            [(all_meta["ids"][i], (all_meta["metadatas"][i] or {}).get("timestamp", 0)) for i in range(meta_count)],
+            [
+                (all_meta["ids"][i], _normalize_ts((all_meta["metadatas"][i] or {}).get("timestamp", 0)))
+                for i in range(meta_count)
+            ],
             key=lambda x: x[1],
             reverse=True,
         )
@@ -576,6 +624,8 @@ class ContextMemory:
         todo_status: str = None,
         limit: int = 10,
         offset: int = 0,
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ) -> list[dict]:
         """查询待办列表，独立实现（不共享 list_memories）。
         按 sort_order 升序排列。
@@ -585,6 +635,15 @@ class ContextMemory:
             where_clauses.append({"todo_status": todo_status})
         if project_id:
             where_clauses.append({"project_id": project_id})
+        if not ignore_scope and creator_id:
+            where_clauses.append(
+                {
+                    "$or": [
+                        {"scope": {"$ne": "personal"}},
+                        {"creator_id": creator_id},
+                    ]
+                }
+            )
         where = {"$and": where_clauses} if len(where_clauses) > 1 else where_clauses[0]
 
         all_meta = self.store.get(where=where, include=["metadatas"])
@@ -622,6 +681,8 @@ class ContextMemory:
         type_filter: str | list[str] = None,
         include_archived: bool = False,
         where: dict = None,
+        creator_id: str = None,
+        ignore_scope: bool = True,
     ) -> int:
         # v0.4.4 P1-3: 复用统一 where 构建方法
         where_clause = self._build_where(
@@ -629,6 +690,8 @@ class ContextMemory:
             project_id=project_id,
             type_filter=type_filter,
             include_archived=include_archived,
+            creator_id=creator_id,
+            ignore_scope=ignore_scope,
         )
         return self.store.count(where=where_clause)
 

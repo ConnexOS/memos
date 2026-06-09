@@ -47,7 +47,7 @@ def list_memories(
 
     dc = config.dashboard
     limited = min(limit, dc.list_limit_max)
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     # 将 source/status 转译为 ChromaDB where 条件
     source_clauses = []
@@ -125,7 +125,7 @@ def list_memories(
 
 @router.post("/api/memories", status_code=201)
 def create_memory(request: Request, req: CreateMemoryRequest, project_id: str = Depends(get_project_id)):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     metadata = {
         "type": req.type,
         "project_id": req.project_id or project_id,
@@ -160,7 +160,7 @@ def export_memories_api(
     memory_ids: list[str] = Query(None),
 ):
     """导出记忆为 JSON Lines 流式下载"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
     type_filter = type if type else None
     ids_filter = memory_ids if memory_ids else None
@@ -208,7 +208,7 @@ async def import_memories_api(
     if content_length and int(content_length) > max_import_bytes:
         raise HTTPException(413, f"导入文件过大（{int(content_length) / 1024 / 1024:.1f}MB），上限 50MB，请拆分后重试")
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     pid = project_id
 
     # P1-5: 流式逐行读取，避免全量加载到内存
@@ -226,7 +226,7 @@ async def import_memories_api(
 @router.post("/api/memories/{mem_id}/renew")
 def renew_memory(request: Request, mem_id: str):
     """续期指定记忆（重置 timestamp 为当前时间）。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     ok = mem.renew_memory(mem_id)
     if not ok:
         raise HTTPException(404, "记忆未找到")
@@ -235,7 +235,7 @@ def renew_memory(request: Request, mem_id: str):
 
 @router.get("/api/memories/{id}")
 def get_memory(request: Request, id: str):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     item = mem.get_memory(id)
     if item is None:
         logger.warning("记忆未找到 id=%s", id)
@@ -248,7 +248,7 @@ def get_memory(request: Request, id: str):
 
 @router.put("/api/memories/{id}")
 def update_memory(request: Request, id: str, req: UpdateMemoryRequest):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     old = mem.get_memory(id)
     if old is None:
         logger.warning("更新记忆未找到 id=%s", id)
@@ -274,7 +274,7 @@ def update_memory(request: Request, id: str, req: UpdateMemoryRequest):
 
 @router.delete("/api/memories/{id}")
 def delete_memory(request: Request, id: str):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         mem.delete_memory(id)
     except (ValueError, ChromaDBError) as e:
@@ -290,7 +290,7 @@ def delete_memory(request: Request, id: str):
 
 @router.post("/api/memories/batch-delete")
 def batch_delete_memories(request: Request, req: BatchDeleteRequest):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     deleted = []
     errors = []
     for mid in req.ids:
@@ -309,7 +309,7 @@ def batch_delete_memories(request: Request, req: BatchDeleteRequest):
 
 @router.post("/api/memories/{id}/archive")
 def archive_memory(request: Request, id: str):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         mem.archive_memory(id)
     except (ValueError, ChromaDBError) as e:
@@ -322,7 +322,7 @@ def archive_memory(request: Request, id: str):
 
 @router.post("/api/memories/{id}/restore")
 def restore_memory(request: Request, id: str):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         mem.restore_memory(id)
     except (ValueError, ChromaDBError) as e:
@@ -339,7 +339,7 @@ def view_memory(request: Request, id: str):
     """查看记忆详情时触发 reuse_count + 1"""
     import time as time_mod
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     now = time_mod.time()
     # 获取当前 reuse_count
     results = mem.store.get(ids=[id], include=["metadatas"])
@@ -362,7 +362,7 @@ def view_memory(request: Request, id: str):
 
 @router.post("/api/memories/batch-create", status_code=201)
 def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest, project_id: str = Depends(get_project_id)):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     created = []
     errors = []
     for m in req.memories:
@@ -411,7 +411,7 @@ def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest, pro
 @router.post("/api/memories/batch-create-v2", status_code=201)
 def batch_create_cards(request: Request, req: BatchCreateCardsRequest, project_id: str = Depends(get_project_id)):
     """批量创建记忆（知识卡片格式），将 problem/solution/insight 拼接后写入"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     created = []
     overwrites = 0
     _conflict_cards = []  # (mem_id, full_content) 用于异步冲突检测
@@ -560,26 +560,3 @@ def batch_create_cards(request: Request, req: BatchCreateCardsRequest, project_i
 
 
 # --- 启动入口 ---
-
-
-_GRACEFUL_SHUTDOWN_TIMEOUT = 10
-
-
-def main():
-    """CLI 入口：启动 Dashboard 服务器。惰性导入 app 避免循环引用。"""
-    from ..app import app  # noqa: F811
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    import uvicorn
-
-    dc = config.dashboard
-    uvicorn.run(
-        app,
-        host=dc.host,
-        port=dc.port,
-        timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_TIMEOUT,
-    )
-
-
-if __name__ == "__main__":
-    main()

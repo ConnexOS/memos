@@ -68,28 +68,244 @@ def cmd_init(args):
         sys.exit(1)
 
 
+# === 双模式骨架命令（v0.5.0） ===
+
+
+def cmd_mcp_install(args):
+    """为当前项目生成带 project_id 和 token 的 .mcp.json"""
+    import json
+    from urllib.parse import quote
+
+    from ..config import config as cfg
+    from ..hook_proxy.auth import load_credentials
+    from ..hook_proxy.project_id import resolve_project_id, resolve_project_name
+
+    project_dir = Path.cwd()
+    try:
+        project_id = resolve_project_id(str(project_dir))
+        project_name = resolve_project_name(str(project_dir))
+    except FileNotFoundError as e:
+        print(f"[错误] {e}", file=sys.stderr)
+        print("请先运行: memos setup --server <URL> --token <TOKEN>", file=sys.stderr)
+        sys.exit(1)
+
+    server_url = args.server or f"http://{cfg.server.host}:{cfg.server.port}"
+
+    url = f"{server_url.rstrip('/')}/mcp/{project_id}/sse?name={quote(project_name)}"
+    # 尝试从 credentials 读取 token 拼入 URL
+    creds = load_credentials()
+    if creds and creds.get("token"):
+        url += f"&token={creds['token']}"
+
+    mcp_config = {
+        "mcpServers": {
+            "memos": {
+                "type": "sse",
+                "url": url,
+            }
+        }
+    }
+
+    mcp_json_path = project_dir / ".mcp.json"
+    if mcp_json_path.exists():
+        existing = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+        existing.setdefault("mcpServers", {})
+        existing["mcpServers"]["memos"] = mcp_config["mcpServers"]["memos"]
+        mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        print("[OK] .mcp.json 已合并更新")
+    else:
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
+        print("[OK] .mcp.json 已生成")
+
+
+def cmd_mcp(args):
+    """MCP 管理"""
+    mcp_action = getattr(args, "mcp_action", None)
+    if mcp_action == "install":
+        cmd_mcp_install(args)
+        return
+
+    # 无子命令时显示帮助
+    print("[!] 请使用子命令:")
+    print("    memos mcp install    生成 .mcp.json")
+    print()
+    print("    MCP SSE 服务由 `memos server` 提供，无需额外 MCP 进程。")
+
+
+def cmd_login(args):
+    """保存凭据到本地"""
+    from ..hook_proxy.auth import save_credentials
+
+    save_credentials(args.server, args.token)
+    print(f"[OK] 凭据已保存: {args.server}")
+
+
+def _cmd_setup_lazy(args):
+    """惰性导入 cmd_setup 避免启动时加载 setup.py 依赖"""
+    from .setup import cmd_setup as fn
+
+    fn(args)
+
+
+def cmd_logout(args):
+    """清除本地凭据"""
+    from ..hook_proxy.auth import clear_credentials
+
+    if clear_credentials():
+        print("[OK] 凭据已清除")
+    else:
+        print("[!] 无凭据需要清除")
+
+
+def cmd_user(args):
+    """用户管理"""
+    from ..web.auth import (
+        generate_token,
+        hash_token,
+        list_users,
+        remove_user,
+        save_user,
+    )
+
+    if args.action == "add":
+        token = generate_token()
+        token_hash_val = hash_token(token)
+        try:
+            save_user(args.name, token_hash_val, role="member")
+        except ValueError as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"用户 '{args.name}' 已创建")
+        print(f"Token: {token}")
+
+    elif args.action == "list":
+        users = list_users()
+        if not users:
+            print("暂无用户")
+            return
+        print(f"{'名称':<20} {'角色':<10} {'创建时间':<25}")
+        print("-" * 55)
+        for u in users:
+            print(f"{u['name']:<20} {u.get('role', 'member'):<10} {u.get('created_at', '-'):<25}")
+
+    elif args.action == "remove":
+        if remove_user(args.name):
+            print(f"用户 '{args.name}' 已删除")
+        else:
+            print(f"[ERROR] 用户 '{args.name}' 不存在", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.action == "token-regen":
+        new_token = generate_token()
+        new_hash = hash_token(new_token)
+
+        from ..web.auth import _read_users, _write_users
+
+        users = _read_users()
+        found = False
+        for u in users:
+            if u["name"] == args.name:
+                u["token_hash"] = new_hash
+                from datetime import datetime, timezone
+
+                u["token_updated_at"] = datetime.now(timezone.utc).isoformat()
+                found = True
+                break
+        if not found:
+            print(f"[ERROR] 用户 '{args.name}' 不存在", file=sys.stderr)
+            sys.exit(1)
+        _write_users(users)
+        print(f"用户 '{args.name}' 的 Token 已重新生成")
+        print(f"新 Token: {new_token}")
+
+
+def cmd_migrate(args):
+    """迁移到 unified 模式"""
+    if not args.to_unified:
+        print("用法: memos migrate --to-unified")
+        return
+
+    import shutil
+    from datetime import datetime
+
+    from ..config import _get_config_file, get_memos_home
+    from ..config import config as cfg
+
+    _backup_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    print("MEMOS v0.4.8 → v0.5.0 unified 迁移")
+    print("=" * 40)
+
+    # 1. 数据备份
+    print("\n[1/5] 备份数据...")
+    config_file = _get_config_file()
+    if config_file.exists():
+        _bak_cfg = str(config_file) + f".v0.4.8.{_backup_ts}.bak"
+        shutil.copy2(str(config_file), _bak_cfg)
+        print(f"  [OK] 配置已备份: {_bak_cfg}")
+    memdb_dir = get_memos_home() / "memdb"
+    if memdb_dir.exists():
+        _bak_memdb = str(memdb_dir) + f".v0.4.8.{_backup_ts}.bak"
+        shutil.copytree(str(memdb_dir), _bak_memdb)
+        print(f"  [OK] 数据已备份: {_bak_memdb}")
+    print("  [INFO] 如需回滚: 恢复上述备份文件并运行 `memos config set server.mode legacy`")
+
+    # 2. 验证前置条件
+    if not _get_config_file().exists():
+        print("[ERROR] 配置文件不存在", file=sys.stderr)
+        sys.exit(1)
+    print("[OK] 配置文件可读写")
+
+    etc_dir = get_memos_home() / "etc"
+    if not etc_dir.exists():
+        print("[ERROR] etc/ 目录不可写", file=sys.stderr)
+        sys.exit(1)
+    print("[OK] etc/ 目录可写")
+
+    # 3. 设置 unified 模式
+    cfg.server.mode = "unified"
+    cfg.server.host = "127.0.0.1"
+    cfg.server.port = 8000
+    cfg.save()
+    print("[OK] server.mode 已设为 'unified'")
+
+    # 4. 迁移认证（如有）
+    from ..web.auth import save_user
+
+    if cfg.auth.token_hash:
+        print("发现旧版认证配置，迁移中...")
+        save_user("admin", cfg.auth.token_hash, role="admin")
+        print("[OK] 认证配置已迁移到 etc/users.json")
+    else:
+        print("[INFO] 未发现旧版认证配置，跳过认证迁移")
+        print("[INFO] 提示：server 首次启动将自动创建 admin 用户")
+
+    # 5. 验证
+    print("\n迁移总结:")
+    print(f"  当前模式: {cfg.server.mode}")
+    print("  请运行 `memos server` 启动统一服务")
+
+
 def cmd_server(args):
-    """启动 MCP Server。"""
-    from ..server.mcp import mcp as _mcp
-
-    _mcp.run()
-
-
-def cmd_dashboard(args):
-    """启动 Web 仪表板。"""
+    """启动 MEMOS Server（unified 模式）"""
     import uvicorn
 
     from ..config import config as cfg
+    from ..server.app import create_unified_app
 
-    host = args.host or cfg.dashboard.host
-    port = args.port or cfg.dashboard.port
+    app = create_unified_app()
     uvicorn.run(
-        "memos.web:app",
-        host=host,
-        port=port,
-        reload=args.reload,
-        timeout_graceful_shutdown=3,
+        app,
+        host=cfg.server.host,
+        port=cfg.server.port,
+        log_level="info",
     )
+
+
+def cmd_dashboard(args):
+    """启动 Web 仪表板（已合并到 memos server）"""
+    print("Dashboard 功能已合并到 memos server。")
+    print("请运行: memos server")
 
 
 def cmd_today(args):
@@ -189,6 +405,20 @@ def cmd_status(args):
     except Exception as e:
         print(f"│ ChromaDB      [!!] 不可用: {e}")
 
+    # Unified 模式状态
+    if cfg.server.mode == "unified":
+        print("│ 模式          unified")
+        try:
+            import requests
+
+            r = requests.get(f"http://{cfg.server.host}:{cfg.server.port}/api/health", timeout=3)
+            if r.status_code == 200:
+                print(f"│ Server        http://{cfg.server.host}:{cfg.server.port} (已连接)")
+            else:
+                print(f"│ Server        http://{cfg.server.host}:{cfg.server.port} (响应异常: {r.status_code})")
+        except Exception:
+            print(f"│ Server        http://{cfg.server.host}:{cfg.server.port} (未连接)")
+
     # LLM 状态
     if cfg.llm.api_base:
         print(f"│ LLM           [OK] {cfg.llm.api_base} ({cfg.llm.active})")
@@ -202,7 +432,7 @@ def cmd_status(args):
         print("│ 认证          [!!] 未配置，请运行 memos init")
 
     # Dashboard
-    print(f"│ 仪表板        http://{cfg.dashboard.host}:{cfg.dashboard.port}")
+    print(f"│ 仪表板        http://{cfg.server.host}:{cfg.server.port}")
 
     print("└──────────────────────────────────────────────┘")
 
@@ -391,6 +621,27 @@ def cmd_doctor(args):
             issues.append("设置环境变量 SAFETENSORS_FAST_LOAD=0 OMP_NUM_THREADS=1 避免 Windows 崩溃")
     else:
         print("  [-] safetensors 环境变量检查（仅 Windows 需要，跳过）")
+
+    # Server 模式诊断
+    print(f"  [OK] 运行模式: {cfg.server.mode}")
+
+    if cfg.server.mode == "unified":
+        try:
+            import requests
+
+            r = requests.get(f"http://{cfg.server.host}:{cfg.server.port}/api/health", timeout=3)
+            if r.status_code == 200:
+                print("  [OK] MCP 代理连通性: 可达")
+            else:
+                print(f"  [!!] MCP 代理连通性: HTTP {r.status_code}")
+        except Exception:
+            print("  [!!] MCP 代理连通性: 不可达")
+
+        from ..hook_proxy.project_id import get_project_id_source, resolve_project_id
+
+        pid = resolve_project_id(os.getcwd())
+        source = get_project_id_source()
+        print(f"  [OK] project_id: {pid} (来源: {source})")
 
     print()
     if issues:
@@ -909,11 +1160,11 @@ def cmd_hook(args):
     action = args.action or "status"
 
     if action == "install":
-        _install_hooks(args.global_mode)
+        install_hooks(args.global_mode)
     elif action == "uninstall":
-        _uninstall_hooks(args.global_mode)
+        uninstall_hooks(args.global_mode)
     elif action == "status":
-        _hook_status(args.global_mode)
+        hook_status(args.global_mode)
 
 
 def _get_settings_path(global_mode: bool) -> Path:
@@ -924,23 +1175,58 @@ def _get_settings_path(global_mode: bool) -> Path:
     return project_dir / ".claude" / "settings.json"
 
 
-def _make_hook_config() -> dict:
-    """构建 MEMOS Hook 的 settings.json 片段。使用 sys.executable 确保走 venv 解释器。"""
-    py = sys.executable
-    if platform.system() == "Windows":
-        # Windows cmd 不支持 KEY=VALUE 前缀，需用 cmd /c + set
-        prompt_cmd = f'cmd /c "set SAFETENSORS_FAST_LOAD=0 && \\"{py}\\" -m memos.hooks.prompt"'
-        stop_cmd = f'cmd /c "set SAFETENSORS_FAST_LOAD=0 && \\"{py}\\" -m memos.hooks.stop"'
+def _detect_project_python(project_dir: Path) -> str | None:
+    """检测项目目录的虚拟环境 Python。
+
+    优先级：
+      1. 当前解释器已在项目目录内 → 直接使用
+      2. 扫描项目根下含 pyvenv.cfg 的目录 → 取第一个有效 venv
+      3. 未找到 → 返回 None（由调用方 fallback）
+    """
+    python_name = "python.exe" if platform.system() == "Windows" else "python"
+    scripts_dir = "Scripts" if platform.system() == "Windows" else "bin"
+
+    # 1. 当前解释器已在项目目录中
+    current = Path(sys.executable).resolve()
+    try:
+        if project_dir.resolve() in current.parents:
+            return str(current)
+    except Exception:
+        pass
+
+    # 2. 扫描项目下一级目录，通过 pyvenv.cfg 识别 venv
+    try:
+        for entry in project_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            py_path = entry / scripts_dir / python_name
+            if py_path.exists() and (entry / "pyvenv.cfg").exists():
+                return str(py_path.resolve())
+    except Exception:
+        pass
+
+    return None
+
+
+def _make_unified_hook_config(project_dir: Path | None = None) -> dict:
+    """构建 unified 模式的 Hook 配置（通过 memos.hook_proxy --hook 瞬发处理）
+
+    project_dir 传入时，优先使用项目内的虚拟环境 Python，确保 Hook
+    命令在对应项目的 memos 包环境中执行。
+    """
+    if project_dir and project_dir.is_dir():
+        py = _detect_project_python(project_dir) or sys.executable
     else:
-        prompt_cmd = f'SAFETENSORS_FAST_LOAD=0 "{py}" -m memos.hooks.prompt'
-        stop_cmd = f'SAFETENSORS_FAST_LOAD=0 "{py}" -m memos.hooks.stop'
+        py = sys.executable
+    # Hook 代理不加载 SentenceTransformer/ChromaDB，无需 SAFETENSORS_FAST_LOAD=0
+    unified_cmd = f'"{py}" -m memos.hook_proxy --hook'
     return {
         "UserPromptSubmit": [
             {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": prompt_cmd,
+                        "command": unified_cmd,
                         "timeout": 60,
                     }
                 ]
@@ -951,7 +1237,7 @@ def _make_hook_config() -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": stop_cmd,
+                        "command": unified_cmd,
                         "timeout": 30,
                     }
                 ]
@@ -960,8 +1246,11 @@ def _make_hook_config() -> dict:
     }
 
 
-def _install_hooks(global_mode: bool):
-    """安装 Hook 到 settings.json（保留已有配置不覆盖）。"""
+def install_hooks(global_mode: bool):
+    """安装 Hook 到 settings.json（保留已有配置不覆盖）。
+
+    v0.5.0 起始终使用 unified 模式（memos.hook_proxy --hook）。
+    """
     settings_path = _get_settings_path(global_mode)
     scope = "全局" if global_mode else "项目"
 
@@ -973,24 +1262,29 @@ def _install_hooks(global_mode: bool):
 
     # 合并 hooks
     hooks = data.setdefault("hooks", {})
-    new_config = _make_hook_config()
+    project_dir = settings_path.parent.parent if not global_mode else None
+    new_config = _make_unified_hook_config(project_dir)
 
     for event_name, hook_list in new_config.items():
         existing = hooks.setdefault(event_name, [])
         # 检查是否已存在相同的 hook 配置
         for entry in hook_list:
-            already_installed = any("memos.hooks" in e.get("hooks", [{}])[0].get("command", "") for e in existing)
+            already_installed = any(
+                "memos.hook_proxy" in h.get("command", "") or "memos.hooks" in h.get("command", "")
+                for e in existing
+                for h in e.get("hooks", [])
+            )
             if not already_installed:
                 existing.append(entry)
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"[OK] Hook 已安装到 {scope}配置: {settings_path}")
-    print("      UserPromptSubmit → python -m memos.hooks.prompt")
-    print("      Stop             → python -m memos.hooks.stop")
+    print(f"[OK] Hook 已安装到 {scope}配置 (unified): {settings_path}")
+    print("      UserPromptSubmit → memos.hook_proxy --hook")
+    print("      Stop             → memos.hook_proxy --hook")
 
 
-def _uninstall_hooks(global_mode: bool):
+def uninstall_hooks(global_mode: bool):
     """从 settings.json 移除 MEMOS Hook 配置。"""
     settings_path = _get_settings_path(global_mode)
     scope = "全局" if global_mode else "项目"
@@ -1005,7 +1299,12 @@ def _uninstall_hooks(global_mode: bool):
     for event_name in list(hooks.keys()):
         entries = hooks[event_name]
         hooks[event_name] = [
-            e for e in entries if not any("memos.hooks" in h.get("command", "") for h in e.get("hooks", []))
+            e
+            for e in entries
+            if not any(
+                "memos.hook_proxy" in h.get("command", "") or "memos.hooks" in h.get("command", "")
+                for h in e.get("hooks", [])
+            )
         ]
         if not hooks[event_name]:
             del hooks[event_name]
@@ -1017,7 +1316,7 @@ def _uninstall_hooks(global_mode: bool):
     print(f"[OK] Hook 已从 {scope}配置卸载: {settings_path}")
 
 
-def _hook_status(global_mode: bool):
+def hook_status(global_mode: bool):
     """显示当前 Hook 安装状态。"""
     settings_path = _get_settings_path(global_mode)
     scope = "全局" if global_mode else "项目"
@@ -1038,8 +1337,16 @@ def _hook_status(global_mode: bool):
     prompt_hooks = hooks.get("UserPromptSubmit", [])
     stop_hooks = hooks.get("Stop", [])
 
-    prompt_installed = any("memos.hooks" in h.get("command", "") for e in prompt_hooks for h in e.get("hooks", []))
-    stop_installed = any("memos.hooks" in h.get("command", "") for e in stop_hooks for h in e.get("hooks", []))
+    prompt_installed = any(
+        "memos.hook_proxy" in h.get("command", "") or "memos.hooks" in h.get("command", "")
+        for e in prompt_hooks
+        for h in e.get("hooks", [])
+    )
+    stop_installed = any(
+        "memos.hook_proxy" in h.get("command", "") or "memos.hooks" in h.get("command", "")
+        for e in stop_hooks
+        for h in e.get("hooks", [])
+    )
 
     status_icon = "[OK]" if prompt_installed else "[!!]"
     print(f"  UserPromptSubmit {status_icon} {'已安装' if prompt_installed else '未安装'}")
@@ -1073,6 +1380,41 @@ def main():
     p_auth = sub.add_parser("auth", help="认证管理")
     p_auth_subs = p_auth.add_subparsers(dest="action")
     p_auth_subs.add_parser("regen", help="重新生成 Dashboard 访问 Token")
+
+    # setup
+    p_setup = sub.add_parser("setup", help="一键初始化：login + mcp + hook")
+    p_setup.add_argument("--server", required=True, help="memos server 地址（host:port 或完整 URL，如 127.0.0.1:8000）")
+    p_setup.add_argument("--token", required=True, help="用户 Token（从管理员获取）")
+    p_setup.add_argument("--project", default=None, help="目标项目目录路径（默认当前目录）")
+    p_setup.add_argument("--name", default=None, help="项目显示名称（默认取 --project 目录名或当前目录名）")
+
+    # mcp
+    p_mcp = sub.add_parser("mcp", help="MCP 管理")
+    p_mcp_subs = p_mcp.add_subparsers(dest="mcp_action")
+    p_mcp_install = p_mcp_subs.add_parser("install", help="生成 .mcp.json")
+    p_mcp_install.add_argument("--server", help="memos server 地址（默认 http://localhost:8000）")
+
+    # user
+    p_user = sub.add_parser("user", help="用户管理（v0.5.0 unified 模式）")
+    p_user_subs = p_user.add_subparsers(dest="action")
+    p_user_add = p_user_subs.add_parser("add", help="创建用户")
+    p_user_add.add_argument("name", help="用户名")
+    p_user_subs.add_parser("list", help="列出所有用户")
+    p_user_remove = p_user_subs.add_parser("remove", help="删除用户")
+    p_user_remove.add_argument("name", help="用户名")
+    p_user_regen = p_user_subs.add_parser("token-regen", help="重新生成 Token")
+    p_user_regen.add_argument("name", help="用户名")
+
+    # login/logout
+    p_login = sub.add_parser("login", help="保存凭据到本地（v0.5.0 unified 模式）")
+    p_login.add_argument("--server", required=True, help="memos server 地址")
+    p_login.add_argument("--token", required=True, help="访问 Token")
+
+    sub.add_parser("logout", help="清除本地凭据（v0.5.0 unified 模式）")
+
+    # migrate
+    p_migrate = sub.add_parser("migrate", help="迁移到 unified 模式（v0.5.0）")
+    p_migrate.add_argument("--to-unified", action="store_true", help="迁移到 unified 模式")
 
     # server
     p_server = sub.add_parser("server", help="启动 MCP Server")
@@ -1161,6 +1503,9 @@ def main():
     p_install.add_argument(
         "--global", dest="global_mode", action="store_true", help="全局模式（~/.claude/settings.json）"
     )
+    p_install.add_argument(
+        "--unified", action="store_true", help="unified 模式（使用 memos mcp --hook 瞬发，需先启动 memos server）"
+    )
     p_uninstall = p_hook_subs.add_parser("uninstall", help="卸载 Hook")
     p_uninstall.add_argument(
         "--global", dest="global_mode", action="store_true", help="全局模式（~/.claude/settings.json）"
@@ -1201,6 +1546,12 @@ def main():
         "hook": cmd_hook,
         "backup": cmd_backup,
         "restore": cmd_restore,
+        "mcp": cmd_mcp,
+        "setup": _cmd_setup_lazy,
+        "user": cmd_user,
+        "login": cmd_login,
+        "logout": cmd_logout,
+        "migrate": cmd_migrate,
     }
     # doctor 返回退出码
     try:

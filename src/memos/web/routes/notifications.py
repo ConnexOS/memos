@@ -68,7 +68,7 @@ def _check_expiry_notify(request: Request):
         from ...features.notifications import get_notification_logger
 
         notifier = get_notification_logger()
-        mem = request.app.state.mem
+        mem = request.app.state.context_memory
         expiry = mem.get_expiry_status()
         expiring = expiry.get("expiring_soon", 0)
         expired = expiry.get("expired", 0)
@@ -132,7 +132,7 @@ def renew_all_expired(
     project_id: str = Depends(get_project_id),  # P0-1: 新增 project_id，防止跨项目泄漏
 ):
     """续期所有已过期/即将过期的记忆。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     expiry = mem.get_expiry_status()
     total = 0
     renewed = False

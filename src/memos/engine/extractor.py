@@ -675,7 +675,7 @@ class MemoryExtractor:
         elapsed = time.time() - self._last_extract_time
         return elapsed >= RATE_LIMIT_SECONDS
 
-    def _persist_raw_conversation(self, user_msg: str, assistant_msg: str):
+    def _persist_raw_conversation(self, user_msg: str, assistant_msg: str, scope: str = None, creator_id: str = None):
         """后台异步持久化原始对话。embedding 编码（~500ms）不阻塞 MCP 响应。"""
         if not self.memory:
             return
@@ -688,6 +688,10 @@ class MemoryExtractor:
         if self.project_id:
             meta["project_id"] = self.project_id
             meta["project_name"] = self.project_name
+        if scope:
+            meta["scope"] = scope
+        if creator_id:
+            meta["creator_id"] = creator_id
         text = f"用户: {user_msg}\n助手: {assistant_msg}"
         t = threading.Thread(target=self._do_persist_conversation, args=(text, meta), daemon=True)
         t.start()
@@ -699,12 +703,14 @@ class MemoryExtractor:
         except Exception as e:
             logger.error("原始对话持久化失败: %s", e)
 
-    def append_conversation(self, role: str, content: str) -> bool:
+    def append_conversation(self, role: str, content: str, scope: str = None, creator_id: str = None) -> bool:
         """追加对话到缓冲区，满 TRIGGER_ROUNDS 条后在后台自动提炼。
-        返回 True 表示已触发提炼，False 表示仍在累积。"""
+        返回 True 表示已触发提炼，False 表示仍在累积。
+
+        scope/creator_id: M6 数据隔离元数据，传入后附加到持久化记录。"""
         turn = f"{role}: {content}"
         merged = None
-        persist_pair = None  # (user_msg, assistant_msg) 在锁外持久化，避免阻塞
+        persist_pair = None  # (user_msg, assistant_msg, scope, creator_id) 在锁外持久化，避免阻塞
         with self._lock:
             self.conversation_buffer.append(turn)
             self._truncate_buffer()
@@ -712,7 +718,7 @@ class MemoryExtractor:
             if role == "user":
                 self._pending_user_msg = content
             elif role == "assistant" and self._pending_user_msg is not None:
-                persist_pair = (self._pending_user_msg, content)
+                persist_pair = (self._pending_user_msg, content, scope, creator_id)
                 self._pending_user_msg = None
 
             if len(self.conversation_buffer) >= TRIGGER_ROUNDS and self._can_extract():
@@ -727,7 +733,9 @@ class MemoryExtractor:
 
         # P0-5 修复: embedding + ChromaDB 写入在锁外执行，避免长时阻塞
         if persist_pair is not None:
-            self._persist_raw_conversation(persist_pair[0], persist_pair[1])
+            self._persist_raw_conversation(
+                persist_pair[0], persist_pair[1], scope=persist_pair[2], creator_id=persist_pair[3]
+            )
 
         if merged is not None:
             self._extract_in_background(merged)
@@ -863,12 +871,13 @@ class MemoryExtractor:
             from ..config.models import _compute_default_project_id
 
             project_id = getattr(self, "_project_id", None) or _compute_default_project_id()
-            mid = self.memory_system.remember(
+            mid = self.memory.remember(
                 f"[原始对话记录]\n{merged}",
                 metadata={
                     "type": "fact",
                     "source": "auto_extracted",
                     "project_id": project_id,
+                    "project_name": self.project_name,
                     "note": "LLM 提炼失败降级，原始对话内容",
                 },
             )

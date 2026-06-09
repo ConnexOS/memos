@@ -10,8 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from memos.web.app import app
-from memos.config import MemoConfig
+from memos.server.app import create_unified_app
 
 
 @pytest.fixture
@@ -43,7 +42,8 @@ def api_client(monkeypatch):
         with (
             patch("memos.web.app.verify_session_token", return_value={"token_hash": "test", "exp": 9999999999}),
         ):
-            app.state.mem = mock_mem
+            app = create_unified_app()
+            app.state.context_memory = mock_mem
             client = TestClient(app, cookies={"memos_session": "test-session"})
             yield client
 

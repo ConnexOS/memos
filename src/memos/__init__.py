@@ -1,9 +1,4 @@
 from memos._version import __version__
-from memos.engine.extractor import MemoryExtractor, _estimate_tokens, format_conversation
-from memos.engine.memory import DEFAULT_DECAY_LAMBDA, SIMILARITY_THRESHOLD, ContextMemory
-
-# dashboard → web 迁移（向后兼容）
-from memos.web import app, main
 
 
 def __getattr__(name: str):
@@ -13,26 +8,22 @@ def __getattr__(name: str):
 
         return _mcp
     if name == "_detect_project_id":
+        import warnings
+
+        warnings.warn(
+            "_detect_project_id 已废弃，仅作 SSE 连接前的 project_id 兜底，"
+            "请使用 resolve_project_id() 从 .memos-project 读取",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from memos.server.mcp import _detect_project_id as _fn
 
         return _fn
     raise AttributeError(f"module 'memos' has no attribute {name!r}")
 
 
-# 向后兼容别名（v0.4.2 改名，v0.5.0 移除）
-LongTermMemory = ContextMemory
-
 __all__ = [
     "__version__",
-    "ContextMemory",
-    "LongTermMemory",  # 向后兼容别名
-    "SIMILARITY_THRESHOLD",
-    "DEFAULT_DECAY_LAMBDA",
-    "MemoryExtractor",
-    "format_conversation",
-    "_estimate_tokens",
     "mcp",
     "_detect_project_id",
-    "app",
-    "main",
 ]

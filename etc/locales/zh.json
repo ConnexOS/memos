@@ -1,0 +1,59 @@
+{
+  "app.name": "MEMOS",
+  "app.tagline": "主动式记忆系统",
+
+  "nav.dashboard": "仪表板",
+  "nav.daily_review": "今日回顾",
+  "nav.suggestions": "主动建议",
+  "nav.search": "记忆检索",
+  "nav.settings": "系统设置",
+  "nav.login": "登录",
+  "nav.logout": "退出",
+
+  "common.save": "保存",
+  "common.cancel": "取消",
+  "common.delete": "删除",
+  "common.edit": "编辑",
+  "common.close": "关闭",
+  "common.confirm": "确认",
+  "common.search": "搜索",
+  "common.loading": "加载中...",
+  "common.no_data": "暂无数据",
+  "common.error": "出错了",
+  "common.success": "操作成功",
+  "common.copy": "复制",
+  "common.refresh": "刷新",
+
+  "memory.type.fact": "事实",
+  "memory.type.decision": "决策",
+  "memory.type.preference": "偏好",
+  "memory.type.todo": "待办",
+  "memory.search.placeholder": "搜索记忆...",
+  "memory.search.empty": "未找到匹配的记忆",
+
+  "suggestion.title": "主动建议",
+  "suggestion.empty": "暂无建议",
+  "suggestion.useful": "有用",
+  "suggestion.not_useful": "无用",
+  "suggestion.dismiss": "忽略",
+
+  "settings.title": "系统设置",
+  "settings.endpoint": "端点管理",
+  "settings.basic": "基础设置",
+  "settings.advanced": "高级设置",
+  "settings.language": "界面语言",
+
+  "auth.login_title": "登录 MEMOS",
+  "auth.token_placeholder": "输入访问令牌",
+  "auth.login_button": "登录",
+  "auth.logout_confirm": "确定退出登录？",
+
+  "daily_review.title": "今日回顾",
+  "daily_review.generate": "生成报告",
+  "daily_review.copy": "复制报告",
+  "daily_review.saved": "报告已保存",
+
+  "status.ok": "正常",
+  "status.error": "异常",
+  "status.unknown": "未知"
+}

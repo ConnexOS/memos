@@ -36,16 +36,21 @@ def list_conversations(
     limit: int = Query(default=50, ge=1),
     offset: int = Query(default=0, ge=0),
 ):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
+    _creator_id = request.session.get("creator_id")
     items = mem.list_memories(
         project_id=project_id,
         type_filter=["user_input", "assistant_output"],
         limit=limit,
         offset=offset,
+        creator_id=_creator_id,
+        ignore_scope=_creator_id is None,
     )
     total = mem.count_memories(
         project_id=project_id,
         type_filter=["user_input", "assistant_output"],
+        creator_id=_creator_id,
+        ignore_scope=_creator_id is None,
     )
     convs = []
     for item in items:
@@ -67,7 +72,7 @@ def list_conversations(
 @router.post("/api/conversations/search")
 def search_conversations(request: Request, req: ConversationSearchRequest):
     """检索会话记录，按 round_id 合并为对话轮次。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     where = {}
     and_clauses = []
@@ -99,8 +104,14 @@ def search_conversations(request: Request, req: ConversationSearchRequest):
         logger.warning("对话搜索 ChromaDB 异常: %s，降级为关键词匹配", e)
         # v0.4.7: 向量搜索失败时降级为关键词匹配（like 搜索）
         try:
+            fallback_where = where.copy()
+            if req.project_id:
+                if "$and" in fallback_where:
+                    fallback_where["$and"].append({"project_id": req.project_id})
+                else:
+                    fallback_where = {"$and": [fallback_where, {"project_id": req.project_id}]}
             fallback_results = mem.store.get(
-                where=where,
+                where=fallback_where,
                 limit=req.top_k,
                 include=["documents", "metadatas"],
             )
@@ -194,7 +205,7 @@ def search_conversations(request: Request, req: ConversationSearchRequest):
 
 @router.post("/api/conversations/extract")
 def extract_conversations(request: Request, req: ExtractConversationsRequest):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     try:
         raw = mem.store.get(ids=req.ids, include=["documents", "metadatas"])
     except Exception as e:
@@ -262,7 +273,7 @@ def extract_conversations(request: Request, req: ExtractConversationsRequest):
 @router.post("/api/conversations/extract-v2")
 def extract_conversations_v2(request: Request, req: ExtractConversationsV2Request):
     """使用提示词模板从对话记录中提炼知识卡片（v2）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     # 确定使用的 LLM 端点
     endpoint_name = req.llm_endpoint or config.llm.active
@@ -426,7 +437,7 @@ def extract_conversations_v2(request: Request, req: ExtractConversationsV2Reques
 @router.post("/api/conversations/extract-preview")
 def extract_conversations_preview(request: Request, req: ExtractConversationsV2Request):
     """预览发送给 LLM 的请求消息（不实际调用 LLM）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     endpoint_name = req.llm_endpoint or config.llm.active
     target_ep = _find_llm_endpoint(endpoint_name)
@@ -485,7 +496,7 @@ def extract_conversations_preview(request: Request, req: ExtractConversationsV2R
 @router.post("/api/conversations/daily-review")
 def generate_daily_review(request: Request, req: DailyReviewRequest):
     """根据当天对话记录生成开发日报（Markdown 格式）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     # 日期格式校验
     if req.date:
@@ -540,7 +551,7 @@ def generate_daily_review(request: Request, req: DailyReviewRequest):
 @router.post("/api/conversations/daily-review/preview")
 def preview_daily_review(request: Request, req: DailyReviewRequest):
     """预览今日回顾的 LLM 请求内容（不实际调用 LLM）"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     target_date = req.date or datetime.now().strftime("%Y-%m-%d")
     try:
@@ -600,7 +611,7 @@ def save_daily_review(request: Request, req: SaveDailyReviewRequest):
     # 获取项目名作为子目录（来自缓存的项目列表）
     project_name = None
     if req.project_id:
-        projects = _get_projects_from_db(request.app.state.mem)
+        projects = _get_projects_from_db(request.app.state.context_memory)
         for p in projects:
             if p["project_id"] == req.project_id:
                 project_name = p.get("project_name")

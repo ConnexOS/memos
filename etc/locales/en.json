@@ -1,0 +1,59 @@
+{
+  "app.name": "MEMOS",
+  "app.tagline": "Active Memory System",
+
+  "nav.dashboard": "Dashboard",
+  "nav.daily_review": "Daily Review",
+  "nav.suggestions": "Suggestions",
+  "nav.search": "Search",
+  "nav.settings": "Settings",
+  "nav.login": "Login",
+  "nav.logout": "Logout",
+
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "common.delete": "Delete",
+  "common.edit": "Edit",
+  "common.close": "Close",
+  "common.confirm": "Confirm",
+  "common.search": "Search",
+  "common.loading": "Loading...",
+  "common.no_data": "No data",
+  "common.error": "Error",
+  "common.success": "Success",
+  "common.copy": "Copy",
+  "common.refresh": "Refresh",
+
+  "memory.type.fact": "Fact",
+  "memory.type.decision": "Decision",
+  "memory.type.preference": "Preference",
+  "memory.type.todo": "Todo",
+  "memory.search.placeholder": "Search memories...",
+  "memory.search.empty": "No matching memories found",
+
+  "suggestion.title": "Suggestions",
+  "suggestion.empty": "No suggestions",
+  "suggestion.useful": "Useful",
+  "suggestion.not_useful": "Not useful",
+  "suggestion.dismiss": "Dismiss",
+
+  "settings.title": "Settings",
+  "settings.endpoint": "Endpoint",
+  "settings.basic": "Basic",
+  "settings.advanced": "Advanced",
+  "settings.language": "Language",
+
+  "auth.login_title": "Login to MEMOS",
+  "auth.token_placeholder": "Enter access token",
+  "auth.login_button": "Login",
+  "auth.logout_confirm": "Are you sure you want to log out?",
+
+  "daily_review.title": "Daily Review",
+  "daily_review.generate": "Generate Report",
+  "daily_review.copy": "Copy Report",
+  "daily_review.saved": "Report saved",
+
+  "status.ok": "OK",
+  "status.error": "Error",
+  "status.unknown": "Unknown"
+}

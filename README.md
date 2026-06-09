@@ -2,21 +2,22 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.8-lightgrey)](https://pypi.org/project/memomate/)
+[![Version](https://img.shields.io/badge/version-0.5.1-lightgrey)](https://pypi.org/project/memomate/)
 
 > 📖 [中文文档](README.zh.md)
 
-**MEMOS** is a lightweight RAG engine designed for AI coding assistants. It provides **cross-session memory** — remembering technical decisions, bug fixes, user preferences, and code conventions from past conversations. Built on ChromaDB + bge-large-zh-v1.5 with a built-in MCP server.
+**MEMOS** is a lightweight RAG engine designed for AI coding assistants. It provides **cross-session memory** — remembering technical decisions, bug fixes, user preferences, and code conventions from past conversations. Built on ChromaDB + bge-large-zh-v1.5, served via a unified FastAPI server with SSE-based MCP protocol.
 
 ## Features
 
 - **🧠 Cross-Session Memory** — Captures knowledge from conversations, retrieves it across sessions
-- **🔌 MCP Server** — 12 tools for AI assistant integration (Claude Code, etc.)
+- **🔌 MCP via SSE** — 12 tools over SSE protocol, seamless integration with Claude Code
 - **🔍 Hybrid Search** — Vector similarity (1024-dim) × BM25 keyword scoring, time-decay ranking
 - **📊 Web Dashboard** — Browse, search, manage memories; visual configuration editor
 - **🏗️ 4 Pipelines** — AI-suggested + direct-write + auto-harvest + manual curation
-- **🗂️ Multi-Project** — Scoped by working directory, contexts stay separate
-- **⚡ Lightweight** — Local-only, single process, no external services
+- **🗂️ Multi-Project + Multi-User** — Project-level and user-level data isolation
+- **⚡ Lightweight Client** — `pip install memomate` (~3MB, zero ML dependencies)
+- **🔐 Token Auth** — Multi-user token authentication for both MCP and Dashboard
 
 ## Prerequisites
 
@@ -37,80 +38,56 @@ source venv/bin/activate
 
 ## Quick Start
 
+### 1. Install (Server)
+
+```bash
+pip install "memomate[server]"
+```
+
+### 2. Start the Unified Server
+
+```bash
+memos server
+```
+
+The first start automatically creates an admin user and prints a token. Open http://127.0.0.1:8000 for the Dashboard.
+
+### 3. Connect Claude Code (Client)
+
 ```bash
 pip install memomate
-memos init --force
-memos dashboard
+memos setup --server http://<SERVER>:8000 --token <TOKEN> --project <项目名>
 ```
 
-Open http://127.0.0.1:8000
+Reload Claude Code — the MCP tools and Hook are ready.
 
-> **Windows**: If model download stalls, set `$env:HF_ENDPOINT = "https://hf-mirror.com"` before `memos init`.
-
-### Claude Code Integration
-
-MEMOS provides two ways to connect with Claude Code.
-
-**Option 1: Hook (recommended)**
-
-Automatically reads and writes memories during conversations:
-
-```bash
-memos hook install
-```
-
-**Option 2: Manual MCP registration**
-
-Register the MCP server in your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "memos": {
-      "command": "python",
-      "args": ["-m", "memos.server"],
-      "env": {}
-    }
-  }
-}
-```
-
-Or via Claude Code CLI:
-
-```bash
-claude mcp add --scope project memos -- python -m memos.server
-```
-
-## Why MEMOS?
-
-Existing memory solutions for AI coding assistants typically:
-
-- ❌ Store flat text without semantic search
-- ❌ Require external services (PostgreSQL, Redis, cloud APIs)
-- ❌ Lack cross-project isolation
-- ❌ Don't handle time-based memory decay
-
-MEMOS addresses these with a self-contained, local-first architecture designed specifically for the AI-assisted coding workflow.
+> **Windows**: If model download stalls, set `$env:HF_ENDPOINT = "https://hf-mirror.com"` before first server start.
 
 ## Architecture
 
 ```mermaid
-graph LR
-    subgraph AI Assistant
-        A[Claude Code]
+graph TB
+    subgraph "Claude Code (Client)"
+        CC[Claude Code]
+        HOOK[Hook Agent<br/>hook_proxy]
     end
-    subgraph MEMOS
-        B[MCP Server<br/>12 tools]
-        C[Engine<br/>Retrieval + Extraction]
-        D[Vector Store<br/>ChromaDB]
-        E[Embedding Model<br/>bge 1024-dim]
-        F[Web Dashboard<br/>FastAPI + Jinja2]
-        G[Hybrid Search<br/>BM25 + Vector]
+
+    subgraph "MEMOS Unified Server"
+        direction TB
+        MCP[MCP SSE<br/>/mcp/{pid}/sse]
+        HAPI[Hook API<br/>/api/hooks/*]
+        DASH[Dashboard<br/>/ + /api/*]
+        AUTH[Auth Layer<br/>SessionAuthStore]
+        ENGINE[Engine<br/>Retrieval + Extraction]
+        STORE[(ChromaDB)]
     end
-    A <-->|stdio JSON-RPC| B
-    B --> C
-    C --> D & E & G
-    F --> C
+
+    CC -->|SSE + Token| MCP
+    HOOK -->|HTTP + Token| HAPI
+    CC ---->|Browser| DASH
+    MCP --> AUTH --> ENGINE --> STORE
+    HAPI --> ENGINE --> STORE
+    DASH --> AUTH --> ENGINE --> STORE
 ```
 
 ### Project Structure
@@ -118,20 +95,23 @@ graph LR
 ```
 memos/
 ├── src/memos/
-│   ├── config/      Pydantic models, loading chain, prompts
-│   ├── storage/     Vector store abstraction (ChromaDB)
-│   ├── engine/      Core: memory CRUD, extraction, review, BM25
-│   ├── server/      MCP server (12 tools, FastMCP stdio)
-│   ├── web/         FastAPI + Jinja2 dashboard
-│   ├── cli/         argparse CLI (15+ commands)
-│   ├── features/    Backup, daily review, notifications, wizard
-│   └── hooks/       Claude Code hook scripts (prompt/stop)
-├── memdb/           ChromaDB persistent data
-├── model/           Local embedding models (~1.3GB)
-└── etc/             Configuration files + i18n locales
+│   ├── config/        Pydantic models, loading chain, prompts
+│   ├── storage/       Vector store abstraction (ChromaDB)
+│   ├── engine/        Core: memory CRUD, extraction, review, BM25
+│   ├── server/        FastAPI unified app + MCP handler + SSE wrapper
+│   ├── web/           FastAPI + Jinja2 dashboard (routes, auth, templates)
+│   ├── cli/           argparse CLI (setup, server, user, etc.)
+│   ├── features/      Backup, daily review, notifications, wizard
+│   ├── hook_proxy/    SSE/stdio proxy layer (auth, project_id)
+│   └── hooks/         Claude Code hook scripts (prompt/stop)
+├── memdb/             ChromaDB persistent data
+├── model/             Local embedding models (~1.3GB)
+└── etc/               Configuration files
 ```
 
 ## MCP Tools (for AI Assistants)
+
+12 tools over SSE protocol — the AI assistant calls them as if they were local:
 
 | Tool | Pipeline | Description |
 |------|----------|-------------|
@@ -152,17 +132,17 @@ memos/
 
 | Command | Description |
 |---------|-------------|
-| `init` | First-time setup wizard |
-| `dashboard` | Launch web UI |
-| `server` | Start MCP server (stdio) |
+| `server` | Start unified FastAPI server (MCP + Dashboard + Hook) |
+| `setup` | One-click client initialization (SSE + Hook) |
+| `user add/list/remove/token-regen` | Multi-user management |
 | `status` | View system health |
 | `doctor` | Diagnose and troubleshoot |
 | `config show / set / validate` | Manage configuration |
 | `export` | Export memories to JSONL |
 | `import` | Import from JSONL |
 | `backup / restore` | Full database backup |
-| `hook install / uninstall / status` | Claude Code hook management |
-| `auth regen` | Regenerate dashboard token |
+| `hook install / uninstall / status` | Hook management |
+| `init` | First-time setup wizard |
 | `vacuum` | Reclaim deleted document space |
 | `reindex` | Rebuild BM25 index |
 
@@ -189,7 +169,8 @@ Override any field via `MEMOS_{SECTION}_{FIELD}` environment variables.
 ## Requirements
 
 - Python 3.12+
-- ~2GB disk (bge-large-zh-v1.5 model ~1.3GB)
+- Server: ~2GB disk (bge model ~1.3GB), ML dependencies ~750MB
+- Client: ~3MB, zero ML dependencies
 - Windows / Linux / macOS
 
 ## License

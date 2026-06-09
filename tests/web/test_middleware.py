@@ -11,25 +11,25 @@ import pytest
 from unittest.mock import MagicMock, patch
 from starlette.testclient import TestClient
 
-from memos.web.app import app
 from memos.web.utils import detect_project_id
 
 
-@pytest.fixture
-def mock_mem():
-    """基础 mock：store.get 返回空结果，count 返回 0。"""
-    mem = MagicMock()
-    mem.store.get.return_value = {"ids": [], "metadatas": []}
-    mem.count_memories.return_value = 0
-    mem.list_memories.return_value = []
-    mem.remember.return_value = "new-id"
-    return mem
+_MOCK = MagicMock()
+_MOCK.store.get.return_value = {"ids": [], "metadatas": []}
+_MOCK.count_memories.return_value = 0
+_MOCK.list_memories.return_value = []
+_MOCK.remember.return_value = "new-id"
+_MOCK.get_memory.return_value = None
 
 
 @pytest.fixture
-def client(mock_mem):
-    """TestClient 实例，ContextMemory 被 mock 替换（避免加载模型和 ChromaDB）。"""
-    with patch("memos.web.app.ContextMemory", return_value=mock_mem):
+def client():
+    """TestClient with mocked ContextMemory — 避免 ChromaDB 连接。"""
+    with patch("memos.server.app.ContextMemory", return_value=_MOCK):
+        from memos.server.app import create_unified_app
+
+        app = create_unified_app()
+        app.state.context_memory = _MOCK
         with TestClient(app) as c:
             yield c
 
@@ -59,7 +59,11 @@ class TestProjectContextMiddleware:
         }
         mock_mem.store.get.return_value = {"ids": [], "metadatas": []}
 
-        with patch("memos.web.app.ContextMemory", return_value=mock_mem):
+        with patch("memos.server.app.ContextMemory", return_value=mock_mem):
+            from memos.server.app import create_unified_app
+
+            app = create_unified_app()
+            app.state.context_memory = mock_mem
             with TestClient(app) as c:
                 resp = c.post(
                     "/api/todos/fake-id/status",
@@ -72,14 +76,17 @@ class TestProjectContextMiddleware:
     def test_跨项目写拒绝_suggestions(self):
         """A 项目 dismiss B 项目的建议 → 404"""
         mock_mem = MagicMock()
-        # store.get 返回一条属于 other-project 的建议
         mock_mem.store.get.return_value = {
             "ids": ["sug-id"],
             "documents": ["test suggestion"],
             "metadatas": [{"project_id": "other-project", "status": "pending"}],
         }
 
-        with patch("memos.web.app.ContextMemory", return_value=mock_mem):
+        with patch("memos.server.app.ContextMemory", return_value=mock_mem):
+            from memos.server.app import create_unified_app
+
+            app = create_unified_app()
+            app.state.context_memory = mock_mem
             with TestClient(app) as c:
                 resp = c.post(
                     "/api/suggestions/sug-id/dismiss",
@@ -96,8 +103,8 @@ class TestProjectContextMiddleware:
         assert "projects" in data
         assert "current_project" in data
 
-    def test_中间件已注册(self):
+    def test_中间件已注册(self, client):
         """ProjectContextMiddleware 在 app.user_middleware 中"""
-        names = [m.cls.__name__ for m in app.user_middleware]
+        names = [m.cls.__name__ for m in client.app.user_middleware]
         assert "ProjectContextMiddleware" in names
         assert "AuthASGIMiddleware" in names

@@ -71,15 +71,13 @@ class TestValidateConfig:
         etc = tmp_path / "etc"
         etc.mkdir(parents=True, exist_ok=True)
         data = {
-            "chroma": {"mode": "persistent", "path": str(tmp_path / "memdb")},
+            "chroma": {"path": str(tmp_path / "memdb")},
             "model": {"path": str(tmp_path / "model" / "bge-large-zh-v1.5"), "vector_dim": 1024},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
-            "auth": {},
         }
         data.update(overrides)
         return data
@@ -93,10 +91,10 @@ class TestValidateConfig:
     def test_missing_section_fails(self, tmp_path):
         """缺少必填子配置段应报错"""
         data = self._make_valid_data(tmp_path)
-        del data["chroma"]
+        del data["llm"]
         errors = validate_config(data)
         assert len(errors) > 0
-        assert any("chroma" in e.lower() for e in errors)
+        assert any("llm" in e.lower() for e in errors)
 
     def test_wrong_type_fails(self, tmp_path):
         """字段类型错误应报错"""
@@ -176,14 +174,13 @@ class TestMemoConfigLoad:
         # 写一份合法配置
         config_path = home / "etc" / "config.json"
         config_data = {
-            "chroma": {"mode": "persistent", "path": str(home / "memdb")},
+            "chroma": {"path": str(home / "memdb")},
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config_data, f)
@@ -204,14 +201,13 @@ class TestMemoConfigLoad:
 
         # 先写一份合法的 .bak
         valid_data = {
-            "chroma": {"mode": "persistent", "path": str(home / "memdb")},
+            "chroma": {"path": str(home / "memdb")},
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(bak_path, "w", encoding="utf-8") as f:
             json.dump(valid_data, f)
@@ -235,14 +231,13 @@ class TestMemoConfigLoad:
 
         # 先写合法 .bak
         valid_data = {
-            "chroma": {"mode": "persistent", "path": str(home / "memdb")},
+            "chroma": {"path": str(home / "memdb")},
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(bak_path, "w", encoding="utf-8") as f:
             json.dump(valid_data, f)
@@ -274,7 +269,7 @@ class TestMemoConfigLoad:
         # 不应崩溃
         cfg = MemoConfig.load()
         assert cfg is not None
-        assert cfg.chroma.mode == "persistent"  # 默认值
+        assert cfg.chroma.path.endswith("memdb")  # chroma 默认 path
 
 
 class TestCLIConfigValidate:
@@ -288,14 +283,13 @@ class TestCLIConfigValidate:
 
         config_file = home / "etc" / "config.json"
         valid_data = {
-            "chroma": {"mode": "persistent", "path": str(home / "memdb")},
+            "chroma": {"path": str(home / "memdb")},
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(valid_data, f)
@@ -317,14 +311,13 @@ class TestCLIConfigValidate:
         config_file = home / "etc" / "config.json"
         # 非法配置：vector_dim 应为 int
         invalid_data = {
-            "chroma": {"mode": "persistent", "path": str(home / "memdb")},
+            "chroma": {"path": str(home / "memdb")},
             "model": {"path": str(home / "model"), "vector_dim": "bad"},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(invalid_data, f)
@@ -344,14 +337,13 @@ class TestCLIConfigValidate:
         """--file 指定文件路径校验"""
         config_file = tmp_path / "my-config.json"
         valid_data = {
-            "chroma": {"mode": "persistent", "path": str(tmp_path / "memdb")},
+            "chroma": {"path": str(tmp_path / "memdb")},
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(valid_data, f)
@@ -430,14 +422,13 @@ class TestAgentConfig:
         ensure_memos_home()
         config_path = tmp_path / "etc" / "config.json"
         old_data = {
-            "chroma": {"mode": "persistent", "path": str(tmp_path / "memdb")},
+            "chroma": {"path": str(tmp_path / "memdb")},
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(old_data, f)
@@ -457,14 +448,13 @@ class TestAgentConfig:
         ensure_memos_home()
         config_path = tmp_path / "etc" / "config.json"
         old_data = {
-            "chroma": {"mode": "persistent", "path": str(tmp_path / "memdb")},
+            "chroma": {"path": str(tmp_path / "memdb")},
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
             "buffer": {},
             "dashboard": {},
             "server": {},
-            "auth": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(old_data, f)

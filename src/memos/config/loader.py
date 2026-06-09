@@ -21,6 +21,7 @@ from .models import (
     BufferConfig,
     ChromaConfig,
     DashboardConfig,
+    HookProxyConfig,
     LLMConfig,
     MemoryConfig,
     ModelConfig,
@@ -68,6 +69,7 @@ def get_config_schema(force_refresh: bool = False) -> dict:
         "notification": NotificationConfig,
         "system_suggestion": SystemSuggestionConfig,
         "agent": AgentConfig,
+        "hook_proxy": HookProxyConfig,
     }
     extra_defs = {}
     from .models import LLMEndpoint, SystemSuggestionTriggers
@@ -193,7 +195,38 @@ class MemoConfig(BaseModel):
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
     system_suggestion: SystemSuggestionConfig = Field(default_factory=SystemSuggestionConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    hook_proxy: HookProxyConfig = Field(default_factory=HookProxyConfig)
     prompt: PromptManager = Field(default_factory=PromptManager)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_mcp_proxy_key(cls, data):
+        """兼容旧配置：mcp_proxy → hook_proxy（v0.5.0 更名）"""
+        if isinstance(data, dict) and "mcp_proxy" in data and "hook_proxy" not in data:
+            data["hook_proxy"] = data.pop("mcp_proxy")
+            logger.info("已迁移配置节 mcp_proxy → hook_proxy")
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_dashboard_host_port(cls, data):
+        """兼容旧配置：dashboard.host/port 已合并到 server 节（v0.5.0）"""
+        if isinstance(data, dict):
+            d = data.get("dashboard")
+            if isinstance(d, dict):
+                d.pop("host", None)
+                d.pop("port", None)
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_hook_proxy_server_url(cls, data):
+        """兼容旧配置：hook_proxy.server_url 已改为从 server.port 派生（v0.5.0）"""
+        if isinstance(data, dict):
+            hp = data.get("hook_proxy")
+            if isinstance(hp, dict):
+                hp.pop("server_url", None)
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -240,6 +273,7 @@ class MemoConfig(BaseModel):
             ("notification", self.notification),
             ("system_suggestion", self.system_suggestion),
             ("agent", self.agent),
+            ("hook_proxy", self.hook_proxy),
         ]:
             if type(section).model_computed_fields:
                 for key in type(section).model_computed_fields:

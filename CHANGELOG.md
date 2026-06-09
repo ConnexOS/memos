@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.5.1] - 2026-06-09
+
+### 统一服务器架构
+- 单进程 FastAPI 统一服务（MCP SSE + Dashboard + Hook 三合一）
+- SSE 直连协议，移除 MCP 薄代理
+- SessionAuthStore session→token 映射解决 SSE 无自定义 Header 问题
+- ProjectAwareSSEWrapper 从 URL 提取 project_id + token
+
+### 身份与安全
+- 多用户 Token 认证系统（bcrypt + users.json）
+- Dashboard login/logout 页面
+- 首次启动自动创建 admin 用户
+
+### 数据隔离
+- creator_id + scope 双字段用户级数据隔离
+- 3 种隔离级别：team / personal / 混合
+
+### 客户端轻量化
+- 依赖拆分为默认 + [server] extras（默认 ~3MB，零 ML 依赖）
+- `memos setup` 一键配置命令（login + mcp + hook 合并）
+- `.memos-project` JSON 单一数据源，移除三条兜底链
+- `__init__.py` 清理顶层重导入，重型模块惰性加载
+
+### CLI 增强
+- `memos setup`：一键初始化客户端
+- `memos server`：启动统一服务
+- `memos user add/list/remove/token-regen`：用户管理
+- `memos migrate --to-unified`：v0.4.x 升级迁移入口
+
+### 开发基础设施
+- contextvars 替代 threading.local，异步安全
+- E2E 测试框架 + 数据隔离测试
+- `scripts/release_exclude.txt` 发布排除清单
+
+## [0.5.0] - 2026-06-05
+
+### 统一服务器架构
+- 新增 FastAPI 统一进程（Dashboard + MCP + Hook 三合一）
+- 支持 unified/legacy 双模式，零成本降级
+- 新增 MCP 薄代理子包，stdio→HTTP 转发
+
+### 身份与安全
+- 多用户 Token 认证系统（bcrypt + users.json）
+- login/logout API 端点
+- 首次启动自动创建 admin 用户
+
+### 数据隔离
+- creator_id + scope 双字段数据隔离
+- 3 种隔离级别：team / personal / 混合
+
+### 开发体验
+- contextvars 替代 threading.local，异步安全
+- CLI 增强：mcp/user/login/logout/migrate 子命令
+- E2E 测试框架 + 数据隔离测试
+
+---
+
 ## v0.4.9 "项目级管理" — 2026-06-03
 
 ### Added

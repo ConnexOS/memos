@@ -14,13 +14,12 @@ router = APIRouter()
 
 @router.post("/api/search")
 def search(request: Request, req: SearchRequest):
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     logger.info("检索 query=%s top_k=%d project=%s", req.query[:50], req.top_k, req.project_id)
     knowledge_types = [
         "fact",
         "decision",
         "preference",
-        "todo",
         "bug_fix",
         "feature_design",
         "code_optimize",

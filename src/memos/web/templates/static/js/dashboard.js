@@ -1254,11 +1254,11 @@ const sectionLabels = {
     buffer: '对话缓冲',
     dashboard: '仪表板',
     server: 'MCP 服务器',
-    auth: '登录认证',
     backup: '备份与恢复',
     notification: '通知中心',
     system_suggestion: '系统建议',
     agent: 'Agent 决策引擎',
+    hook_proxy: 'Hook 代理',
 };
 
 const sectionDescs = {
@@ -1268,20 +1268,17 @@ const sectionDescs = {
     buffer: '对话缓冲区与提炼策略',
     dashboard: 'Web 仪表板参数',
     server: 'MCP 协议服务端参数',
-    auth: '登录认证参数',
     backup: 'ChromaDB 数据全量备份与恢复',
     notification: '系统通知的保留与限速',
     system_suggestion: '系统状态型建议（管道二）的推送策略',
     agent: 'Agent 决策引擎配置（Phase 1-3：模式检测/每日简报/信号推送）',
+    hook_proxy: 'Hook 代理（server_url 已从 server.port 自动派生）',
 };
 
 const fieldHelpText = {
     // ChromaDB
     'chroma.collection_name': 'ChromaDB 集合名，用于按项目隔离数据',
-    'chroma.mode': '运行模式: persistent（本地文件）/ http（远程服务）',
-    'chroma.path': '本地持久化目录路径，仅 persistent 模式生效',
-    'chroma.host': 'ChromaDB 服务端地址，仅 http 模式生效',
-    'chroma.port': 'ChromaDB 服务端端口，仅 http 模式生效',
+    'chroma.path': '本地持久化目录路径',
     'chroma.timeout': 'ChromaDB 操作超时时间（秒）',
     // LLM
     'llm.api_base': 'LLM 服务地址，health 和 chat 接口自动拼接后缀',
@@ -1321,9 +1318,6 @@ const fieldHelpText = {
     'server.id_length': '自动生成的记忆 ID 长度',
     'server.mcp_top_k_max': 'MCP recall 最大返回条数',
     'server.response_truncate_length': 'MCP 响应中长文本截断长度',
-    // Auth
-    'auth.disable': '是否关闭登录认证（不推荐）',
-    'auth.session_ttl': '登录令牌过期时间（分钟）',
     // Backup
     'backup.target_dir': '备份文件输出目录',
     'backup.max_backups': '最大保留备份数，超出自动覆盖最旧备份',
@@ -1361,6 +1355,8 @@ const fieldHelpText = {
     'system_suggestion.enabled': '系统状态型建议全局开关（管道二）',
     'system_suggestion.daily_limit': '管道二每日最大推送数',
     'system_suggestion.cooldown_hours': '同类系统事件冷却时间（小时）',
+    // HookProxy
+    'hook_proxy.timeout': 'Hook 请求超时秒数（server_url 从 server.port 自动派生）',
 };
 
 const fieldSaveMap = {
@@ -1416,16 +1412,11 @@ function _renderCfgFieldRow(key, fieldName, value) {
     h += '<div class="col-sm-8">';
 
     if (typeof value === 'boolean') {
-        const checkboxLabel = (fullKey === 'auth.disable') ? '关闭登录认证' : '启用';
+        const checkboxLabel = '启用';
         h += `<div class="form-check pt-1 d-inline-block">
             <input type="checkbox" class="form-check-input" id="${inputId}" data-key="${dataKey}" ${value ? 'checked' : ''}>
             <label class="form-check-label small" for="${inputId}">${checkboxLabel}</label>
         </div>`;
-    } else if (fullKey === 'chroma.mode') {
-        h += `<select class="form-select form-select-sm d-inline-block" style="width:auto;min-width:200px;max-width:100%" id="${inputId}" data-key="${dataKey}">
-            <option value="persistent" ${value === 'persistent' ? 'selected' : ''}>persistent（本地文件）</option>
-            <option value="http" ${value === 'http' ? 'selected' : ''}>http（远程服务）</option>
-        </select>`;
     } else {
         h += `<input type="text" class="form-control form-control-sm d-inline-block" style="width:auto;min-width:200px;max-width:100%" id="${inputId}" value="${escapeHtml(String(value))}" data-key="${dataKey}">`;
     }
@@ -1460,7 +1451,7 @@ async function loadSettings() {
 
         // ── 2. 基础设置 ──
         html += '<div class="card mb-2"><div class="card-header p-2 d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#collapse-basic" role="button"><h6 class="mb-0"><i class="bi bi-sliders me-1"></i>基础设置</h6><span class="badge bg-primary bg-opacity-25 text-primary">P1 · 常用</span></div><div class="collapse show" id="collapse-basic"><div class="card-body p-2">';
-        ['dashboard', 'model', 'auth', 'suggestion'].forEach(function(sk) {
+        ['dashboard', 'model', 'suggestion'].forEach(function(sk) {
             var fields = sections[sk];
             if (!fields) return;
             html += '<div class="cfg-section-desc mb-1">' + (sectionDescs[sk] || sk) + '</div>';
@@ -1480,7 +1471,7 @@ async function loadSettings() {
 
         // ── 3. 高级设置 ──
         html += '<div class="card mb-2"><div class="card-header p-2 d-flex justify-content-between align-items-center collapsed" data-bs-toggle="collapse" data-bs-target="#collapse-advanced" role="button"><h6 class="mb-0"><i class="bi bi-tools me-1"></i>高级设置</h6><span class="badge bg-secondary bg-opacity-25 text-secondary">P2</span></div><div class="collapse" id="collapse-advanced"><div class="card-body p-2">';
-        var advancedKeys = Object.keys(sections).filter(function(k) { return !['llm', 'dashboard', 'model', 'auth', 'suggestion', 'memory'].includes(k); });
+        var advancedKeys = Object.keys(sections).filter(function(k) { return !['llm', 'dashboard', 'model', 'suggestion', 'memory'].includes(k); });
         advancedKeys.forEach(function(key) {
             var fields = sections[key];
             if (!fields) return;
@@ -3832,10 +3823,7 @@ document.getElementById('dr-preview-btn')?.addEventListener('click', async funct
 let _pmDeletePid = null;
 let _pmDeleteName = '';
 
-async function openProjectManager() {
-    const modal = new bootstrap.Modal(document.getElementById('projectMgmtModal'));
-    modal.show();
-
+async function _loadProjectManagerData() {
     document.getElementById('pm-loading').style.display = '';
     document.getElementById('pm-content').style.display = 'none';
 
@@ -3905,6 +3893,16 @@ async function openProjectManager() {
         document.getElementById('pm-loading').style.display = 'none';
         document.getElementById('pm-content').style.display = '';
     }
+}
+
+async function openProjectManager() {
+    const modal = new bootstrap.Modal(document.getElementById('projectMgmtModal'));
+    modal.show();
+    await _loadProjectManagerData();
+}
+
+async function refreshProjectManager() {
+    await Promise.all([_loadProjectManagerData(), loadProjects()]);
 }
 
 // --- 项目管理：删除确认 ---

@@ -1,0 +1,109 @@
+{
+  "version": "2.0",
+  "templates": {
+    "deepseek-ai@extract": {
+      "id": "deepseek-ai@extract",
+      "name": "deepseek-ai 提炼知识提示词",
+      "template_type": "extract",
+      "active_version": "1.0.0",
+      "version_count": 2,
+      "updated_at": 1779860870.1393225
+    },
+    "local-LLM@extract": {
+      "id": "local-LLM@extract",
+      "name": "local-LLM 提炼知识提示词",
+      "template_type": "extract",
+      "active_version": "1.0.0",
+      "version_count": 3,
+      "updated_at": 1778830779.0950732
+    },
+    "modelscope@extract": {
+      "id": "modelscope@extract",
+      "name": "modelscope提炼知识提示词",
+      "template_type": "extract",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1778843766.69826
+    },
+    "deepseek-ai@daily-review": {
+      "id": "deepseek-ai@daily-review",
+      "name": "deepseek-ai 今日回顾提示词",
+      "template_type": "daily-review",
+      "active_version": "1.0.1",
+      "version_count": 2,
+      "updated_at": 1780029618.8315654
+    },
+    "local-LLM@daily-review": {
+      "id": "local-LLM@daily-review",
+      "name": "local-LLM 今日回顾提示词",
+      "template_type": "daily-review",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779860965.550002
+    },
+    "modelscope@daily-review": {
+      "id": "modelscope@daily-review",
+      "name": "modelscope 今日回顾提示词",
+      "template_type": "daily-review",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779860971.7857533
+    },
+    "default@extract": {
+      "id": "default@extract",
+      "name": "系统提示词 (默认)",
+      "template_type": "extract",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779021333.0752866
+    },
+    "default@daily-review": {
+      "id": "default@daily-review",
+      "name": "今日回顾 (默认)",
+      "template_type": "daily-review",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1778844050.7071
+    },
+    "fallback": {
+      "id": "fallback",
+      "name": "终极回退",
+      "template_type": "default",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779021333.0752866
+    },
+    "fallback@extract": {
+      "id": "fallback@extract",
+      "name": "知识提炼 (缺省回退)",
+      "template_type": "extract",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779021333.0752866
+    },
+    "fallback@daily-review": {
+      "id": "fallback@daily-review",
+      "name": "今日回顾 (缺省回退)",
+      "template_type": "daily-review",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779021333.0752866
+    },
+    "default@conflict": {
+      "id": "default@conflict",
+      "name": "冲突检测",
+      "template_type": "conflict",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1779021333.0752866
+    },
+    "default@todo-extract": {
+      "id": "default@todo-extract",
+      "name": "待办提取 (v0.4.5)",
+      "template_type": "todo-extract",
+      "active_version": "1.0.0",
+      "version_count": 1,
+      "updated_at": 1780028981.548724
+    }
+  }
+}

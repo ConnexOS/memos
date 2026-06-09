@@ -52,7 +52,7 @@ metadata := map[string]any{
 ## 2. 项目概述
 
 主动式记忆系统（MemoMate），包名 `memos`。专门为 AI 编程助手打造记忆伙伴，提供跨对话「记忆」能力。
-当前版本 `v0.4.8`。8 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + cli/ + features/ + hooks/。
+当前版本 `v0.4.9`。10 子包分层架构：config/ → storage/ → engine/ → server/ + web/ + dashboard/ + cli/ + features/ + hooks/ + hook_proxy/。
 
 ## 3. 技术栈
 
@@ -79,6 +79,8 @@ LLM 多端点支持，OpenAI chat/completions 格式。混合检索：rank_bm25 
 | 提炼引擎 | `engine/extractor.py` | 缓冲管理（5轮触发），LLM 调用 + JSON 三级回退 + 去重 |
 | MCP Server | `server/mcp.py` | FastMCP，12 工具（含 create_todo） |
 | Web 仪表板 | `web/` | FastAPI + Jinja2，routes/models/services 三层 |
+| Dashboard 入口 | `dashboard/` | uvicorn 启动入口，`memos.dashboard:app` |
+| Hook 代理 | `hook_proxy/` | SSE/stdio 代理层，auth + project_id 管理 |
 | 配置系统 | `config/` | models.py(10子配置) + prompts.py + loader.py |
 | 辅助功能 | `features/` | backup + daily_review + usage + notifications + wizard |
 | Hook | `hooks/` | prompt.py + stop.py，对话自动采集 |
@@ -88,22 +90,24 @@ LLM 多端点支持，OpenAI chat/completions 格式。混合检索：rank_bm25 
 - **抽象存储**: `VectorStore`(ABC) → `ChromaDBPersistentStore` / `ChromaDBHttpStore`，`create_store()` 工厂
 - **集中配置**: `MemoConfig`(Pydantic, 10子配置)，加载链 `etc/config.json` → `MEMOS_{SECTION}_{FIELD}` 环境变量覆盖
 - **JSON 回退链**: extractor 3级 → dashboard 4级，含 `<think>` 推理块剥离
-- **Hook 架构**: `.claude/settings.json` → `SAFETENSORS_FAST_LOAD=0 python -m memos.hooks.prompt` → ChromaDB
+- **Hook 架构**: `.claude/settings.json` → `python -m memos.hook_proxy --hook` → unified server 转发至 ChromaDB
 - **分层检索**: Layer1 (sim≥0.55) 注入上下文, Layer2 (sim≥0.75) 写入主动建议，三重闸门控制
 
 ### 目录结构
 
 ```
 D:/DevSpace/MEMOS/
-├── src/memos/           # 核心源码（8 子包）
+├── src/memos/           # 核心源码（10 子包）
 │   ├── config/           配置层 (models + prompts + loader)
 │   ├── storage/          存储抽象层 (base + chroma + embeddings)
 │   ├── engine/           核心引擎 (memory + extractor + review)
 │   ├── server/           MCP 服务层
 │   ├── web/              Web 仪表板 (app + auth + routes/ + templates/)
+│   ├── dashboard/        Uvicorn 启动入口 (memos.dashboard:app)
 │   ├── cli/              CLI 入口
 │   ├── features/         辅助功能 (backup + usage + notifications + wizard)
-│   └── hooks/            Hook 脚本 (prompt.py + stop.py)
+│   ├── hooks/            Hook 脚本 (prompt.py + stop.py)
+│   └── hook_proxy/       SSE/stdio 代理 (auth + project_id + proxy)
 ├── tests/               测试 (pytest, 52+ 文件)
 ├── etc/                 配置与持久化 (config.json + prompts/ + usage_log.jsonl)
 ├── scripts/             辅助脚本 (smoke_test, benchmark, backup 等)
@@ -120,7 +124,7 @@ D:/DevSpace/MEMOS/
 - **项目隔离**: ChromaDB `where.project_id` 过滤，MCP `set_project_id` 切换
 - **BM25 惰性重建**: 写入 `_invalidate_bm25()` 失效，查询 `_ensure_bm25_index()` 懒加载
 - **ChromaDB 锁**: 严禁 MCP Server 和 Dashboard 同时对同一项目写入（SQLite 文件级锁）
-- **Hook 安装**: `memos hook install` 写入 `SAFETENSORS_FAST_LOAD=0 python -m memos.hooks.prompt` 命令（Windows 必需）
+- **Hook 安装**: `memos hook install --unified` 写入 `SAFETENSORS_FAST_LOAD=0 python -m memos.hook_proxy --hook` 命令（Windows 必需）
 - **Stop Hook 幂等**: `pending_assistant=false` 标记，防止重复写入
 - **缓存**: 系统状态 15s TTL，项目列表 30s TTL
 - **嵌入模型**: 本地 `./model/bge-large-zh-v1.5`，无需联网
@@ -128,13 +132,23 @@ D:/DevSpace/MEMOS/
 ## 6. 常用命令
 
 ```powershell
-# 测试
+# 开发安装
+pip install -e .
+
+# 测试全部
 .\venv\Scripts\python -m pytest tests/ -v
 .\venv\Scripts\python -m pytest tests/ -v -k "not real"
+
+# 测试单个文件
+.\venv\Scripts\python -m pytest tests/test_extractor_unified.py -v
+
+# 测试覆盖率
+.\venv\Scripts\python -m pytest tests/ --cov=src/memos --cov-report=term
 
 # Lint / Format
 .\venv\Scripts\python -m ruff check src/
 .\venv\Scripts\python -m ruff format src/
+.\venv\Scripts\python -m ruff check --fix src/
 
 # 启动 Dashboard
 .\venv\Scripts\python -m uvicorn memos.dashboard:app --host 127.0.0.1 --port 8000 --reload
@@ -143,6 +157,8 @@ D:/DevSpace/MEMOS/
 .\venv\Scripts\python -m memos.cli status
 .\venv\Scripts\python -m memos.cli doctor
 .\venv\Scripts\python -m memos.cli today
+.\venv\Scripts\python -m memos.cli config show
+.\venv\Scripts\python -m memos.cli hook status
 ```
 
 ## 7. 参考索引

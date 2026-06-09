@@ -65,7 +65,8 @@ def list_todos(
     offset: int = Query(default=0, ge=0),
 ):
     """查询待办列表。默认排除 completed/cancelled，除非指定 todo_status。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
+    _creator_id = request.session.get("creator_id")
 
     # 构建 where 过滤条件
     where: dict = {"type": "todo"}
@@ -80,9 +81,17 @@ def list_todos(
         limit=limit,
         offset=offset,
         include_archived=show_archived,
+        creator_id=_creator_id,
+        ignore_scope=_creator_id is None,
     )
 
-    total = mem.count_memories(project_id=project_id, where=where, include_archived=show_archived)
+    total = mem.count_memories(
+        project_id=project_id,
+        where=where,
+        include_archived=show_archived,
+        creator_id=_creator_id,
+        ignore_scope=_creator_id is None,
+    )
 
     # 按 todo_status 分组统计
     stats_where: dict = {"type": "todo"}
@@ -90,7 +99,13 @@ def list_todos(
     for s in TODO_STATUS_VALUES:
         try:
             sw = {**stats_where, "todo_status": s}
-            stats[s] = mem.count_memories(project_id=project_id, where=sw, include_archived=show_archived)
+            stats[s] = mem.count_memories(
+                project_id=project_id,
+                where=sw,
+                include_archived=show_archived,
+                creator_id=_creator_id,
+                ignore_scope=_creator_id is None,
+            )
         except Exception:
             stats[s] = 0
 
@@ -148,7 +163,7 @@ def create_todo(request: Request, body: dict, project_id: str = Depends(get_proj
         raise HTTPException(400, f"无效优先级: {priority}，可选: {', '.join(sorted(PRIORITY_VALUES))}")
 
     due_date = body.get("due_date", "")
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
 
     now = time_mod.time()
     metadata = {
@@ -176,7 +191,7 @@ def create_todo(request: Request, body: dict, project_id: str = Depends(get_proj
 @router.put("/api/todos/{todo_id}")
 def update_todo(request: Request, todo_id: str, body: dict, project_id: str = Depends(get_project_id)):
     """编辑待办内容/优先级/到期日/sort_order。todo_status 变更走 status 端点。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     old = mem.get_memory(todo_id)
     if old is None:
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
@@ -228,7 +243,7 @@ def change_todo_status(request: Request, todo_id: str, body: dict, project_id: s
     if not target_status or target_status not in TODO_STATUS_VALUES:
         raise HTTPException(400, f"无效 todo_status: {target_status}，可选: {', '.join(sorted(TODO_STATUS_VALUES))}")
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     old = mem.get_memory(todo_id)
     if old is None:
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
@@ -298,7 +313,7 @@ def bulk_delete_todos(request: Request, todo_status: str = Query(...), project_i
     if todo_status not in TODO_STATUS_VALUES:
         raise HTTPException(400, f"无效 todo_status: {todo_status}")
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     results = mem.list_memories(
         project_id=project_id,
         where={"type": "todo", "todo_status": todo_status},
@@ -326,7 +341,7 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...), project_
     if todo_status not in TODO_STATUS_VALUES:
         raise HTTPException(400, f"无效 todo_status: {todo_status}")
 
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     results = mem.list_memories(
         project_id=project_id,
         where={"type": "todo", "todo_status": todo_status, "active": True},
@@ -351,7 +366,7 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...), project_
 @router.post("/api/todos/{todo_id}/archive")
 def archive_todo(request: Request, todo_id: str, project_id: str = Depends(get_project_id)):
     """归档单个待办。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     old = mem.get_memory(todo_id)
     if old is None:
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
@@ -371,7 +386,7 @@ def archive_todo(request: Request, todo_id: str, project_id: str = Depends(get_p
 @router.delete("/api/todos/{todo_id}")
 def delete_todo(request: Request, todo_id: str, project_id: str = Depends(get_project_id)):
     """删除待办。"""
-    mem = request.app.state.mem
+    mem = request.app.state.context_memory
     old = mem.get_memory(todo_id)
     if old is None:
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")

@@ -11,11 +11,15 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if "MEMOS_HOME" not in os.environ:
     os.environ["MEMOS_HOME"] = _project_root
 
+# 测试使用独立 collection，避免污染生产数据
+os.environ.setdefault("MEMOS_TEST_COLLECTION", "test_suite")
+
 # 限制 PyTorch 线程数，防止 Windows 上 safetensors 多线程加载导致内存访问冲突 (access violation)
 # 必须在任何 memos 模块导入之前设置
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("SAFETENSORS_FAST_LOAD", "0")  # 禁用 safetensors 并行加载
+os.environ.setdefault("MEMOS_AUTH_DISABLE", "true")  # 测试环境默认禁用认证
 
 FAKE_LLM_RESPONSE = json.dumps(
     [
@@ -52,3 +56,25 @@ def fake_memory():
     fm = mock.Mock()
     fm.recall_with_scores.return_value = []
     return fm
+
+
+@pytest.fixture(scope="session")
+def unified_app():
+    """Session 级共享 unified app — 避免多次初始化 ChromaDB 导致文件锁冲突。
+
+    所有需要 TestClient 的集成测试应使用此 fixture 或基于它的 client。
+    各测试文件不应创建独立的 module-scoped app fixture。
+    """
+    from memos.server.app import create_unified_app
+
+    return create_unified_app()
+
+
+@pytest.fixture(scope="session")
+def unified_client(unified_app):
+    """Session 级共享 TestClient，所有集成测试共用同一个 app 实例。"""
+    from starlette.testclient import TestClient
+
+    # 使用 localhost base_url，避免 testserver 的 SSE 安全策略问题
+    with TestClient(unified_app, base_url="http://localhost:8000") as c:
+        yield c

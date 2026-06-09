@@ -43,3 +43,14 @@ Thumbs.db
 
 # Documentation
 document/
+
+# Sensitive data
+etc/secret_key.txt
+etc/config.json.bak
+*.jsonl
+etc/*.log
+etc/auth_key.txt
+
+# IDE
+.vs/
+.ruff_cache/

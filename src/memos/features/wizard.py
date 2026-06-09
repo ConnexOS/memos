@@ -123,7 +123,7 @@ class InitWizard:
     def _run_force_mode(self) -> bool:
         """force 模式：跳过所有交互，使用默认值完成初始化。"""
         from ..config import ensure_memos_home
-        from ..web.auth import generate_secret_key, generate_token, hash_token
+        from ..web.auth import generate_token, hash_token, save_user
 
         ensure_memos_home()
 
@@ -134,10 +134,12 @@ class InitWizard:
         model_name = "bge-large-zh-v1.5"
         print(f"  模型: {model_name} (默认)")
 
-        # 认证
+        # 创建 admin 用户（force 模式先删除已存在的 admin）
+        from ..web.auth import remove_user as _remove_user
+
+        _remove_user("admin")
         plain_token = generate_token()
-        self.config.auth.token_hash = hash_token(plain_token)
-        self.config.auth.secret_key = generate_secret_key()
+        save_user("admin", hash_token(plain_token), role="admin")
         self.config.save()
         print("  [OK] 配置已写入")
 
@@ -362,14 +364,12 @@ class InitWizard:
 
     def _step_5(self) -> bool:
         """生成 Dashboard 认证 Token。"""
-        from ..web.auth import generate_secret_key, generate_token, hash_token
+        from ..web.auth import generate_token, hash_token, save_user
 
         print("  生成 Dashboard 访问凭据...")
 
         plain_token = generate_token()
-        self.config.auth.token_hash = hash_token(plain_token)
-        self.config.auth.secret_key = generate_secret_key()
-        self.config.save()
+        save_user("admin", hash_token(plain_token), role="admin")
         print("  [OK] 认证 Token 已生成")
 
         self._state["token_generated"] = True

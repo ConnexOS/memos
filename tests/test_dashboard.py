@@ -50,14 +50,12 @@ def mock_mem():
 @pytest.fixture
 def client(mock_mem):
     with (
-        # 修复：app.py 通过 "from ..engine.memory import ContextMemory" 导入（本地引用），
-        # 因此必须 patch memos.web.app.ContextMemory 而非 memos.engine.memory.ContextMemory。
-        # lifespan 函数调用 app.state.mem = ContextMemory()，patch 后返回 mock_mem 而非真实实例。
-        patch("memos.web.app.ContextMemory", return_value=mock_mem),
-        patch("memos.web.app.verify_session_token", return_value={"token_hash": "test", "exp": 9999999999}),
+        patch("memos.server.app.ContextMemory", return_value=mock_mem),
+        patch("memos.web.auth.verify_session_token", return_value={"token_hash": "test", "exp": 9999999999}),
     ):
-        from memos.web.app import app
+        from memos.server.app import create_unified_app
 
+        app = create_unified_app()
         with TestClient(app, cookies={"memos_session": "fake-session-token"}) as c:
             yield c
 
@@ -279,8 +277,8 @@ class TestConfig:
         assert "flattened" in data
         assert "chroma" in data["sections"]
         assert "dashboard" in data["sections"]
-        assert "dashboard.host" in data["flattened"]
-        assert "dashboard.port" in data["flattened"]
+        assert "dashboard.locale" in data["flattened"]
+        assert "dashboard.status_cache_ttl" in data["flattened"]
 
     def test_get_config_contains_expected_fields(self, client):
         resp = client.get("/api/config")
@@ -309,7 +307,7 @@ class TestConfig:
         assert resp.status_code == 200
         data = resp.json()
         assert data["message"] == "配置已重新加载"
-        assert "dashboard.host" in data["config"]
+        assert "server.host" in data["config"]
 
     def test_put_config_boolean_value(self, client):
         resp = client.put("/api/config", json={"key": "chroma.timeout", "value": "60"})

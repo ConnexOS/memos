@@ -33,7 +33,6 @@ PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 STATE_FILE = PROJECT_DIR / ".claude" / "conv_state.json"
 NO_SUGGESTIONS_FILE = PROJECT_DIR / ".claude" / "no_suggestions"
 
-_mem = None
 _pid_cache = None
 
 
@@ -42,22 +41,6 @@ def _get_project_id() -> str:
     if _pid_cache is None:
         _pid_cache = hashlib.md5(str(PROJECT_DIR).encode()).hexdigest()[:8]
     return _pid_cache
-
-
-def _get_memory():
-    global _mem
-    if _mem is None:
-        try:
-            from memos.engine.memory import ContextMemory
-
-            _mem = ContextMemory()
-            logger.debug("ContextMemory 初始化成功")
-        except Exception as e:
-            logger.error("初始化 ContextMemory 失败: %s", e)
-            import traceback
-
-            logger.error(traceback.format_exc())
-    return _mem
 
 
 def _no_suggestions_file_exists() -> bool:
@@ -332,22 +315,6 @@ def _match_manual_suggestions(current_msg: str, mem, pid: str) -> list[dict]:
     documents = results.get("documents", [])
     metadatas = results.get("metadatas", [])
     if not ids:
-        # Fallback: 查找全部项目中已启用的手工建议（兼容 Always 模式跨项目生效）
-        logger.debug("管道三在 pid=%s 下未找到手工建议，尝试全项目查找", pid)
-        try:
-            results = mem.store.get(
-                where={"$and": [{"type": "manual_suggestion"}]},
-                include=["documents", "metadatas"],
-            )
-            ids = results.get("ids", [])
-            documents = results.get("documents", [])
-            metadatas = results.get("metadatas", [])
-            if ids:
-                logger.debug("管道三在全项目范围找到 %d 条手工建议", len(ids))
-        except Exception as e:
-            logger.warning("管道三全项目回退查询失败: %s", e)
-
-    if not ids:
         return []
 
     now = time.time()
@@ -454,46 +421,6 @@ def _format_context_item(r: dict) -> str:
     # 截断到 150 字符
     doc_truncated = doc[:150] + "…" if len(doc) > 150 else doc
     return f"[历史参考] {date_str} | [{doc_type}] | 相似度 {sim:.0%}\n{doc_truncated}\n---"
-
-
-def _build_context(mem, query: str, pid: str) -> str:
-    """检索相关记忆并构建上下文注入文本（旧版，仅用于 MEMOS_USE_OLD_CONTEXT=1 回退）。"""
-    if not mem or not query:
-        return ""
-
-    try:
-        knowledge_types = [
-            "fact",
-            "decision",
-            "preference",
-            "bug_fix",
-            "feature_design",
-            "code_optimize",
-            "tech_knowledge",
-        ]
-        results = mem.recall(
-            query,
-            top_k=5,
-            project_id=pid,
-            return_scores=True,
-            where={"type": {"$in": knowledge_types}},
-        )
-        if not results:
-            return ""
-
-        lines = ["--- 相关记忆 ---"]
-        for r in results:
-            if isinstance(r, dict):
-                doc = r.get("document", "")
-                t = r.get("metadata", {}).get("type", "?")
-                lines.append(f"  [{t}] {doc[:200]}")
-            elif isinstance(r, str):
-                lines.append(f"  {r[:200]}")
-        logger.debug("[旧版] 已构建 %d 条相关记忆", len(results))
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error("检索记忆失败: %s", e)
-        return ""
 
 
 def _get_memory_config():
@@ -942,11 +869,15 @@ def _fifo_cleanup(mem, pid: str, cfg) -> None:
 
 
 def _save_injected_records(pid: str, records: list) -> None:
-    """保存被注入 additionalContext 的 Layer 1 记录（清旧写新）。
+    """保存被注入 additionalContext 的记录（清旧写新）。
 
     每次调用先覆盖旧文件，只保留最新会话的注入记录。
     Dashboard 通过读取此文件来展示"最近会话注入"列表。
     空 records 时删除旧文件，避免 Dashboard 展示过时数据。
+
+    兼容两种记录格式：
+      - 知识库召回: {"id", "document", "metadata.type"}
+      - 手工建议:   {"source_memory_id", "content", "metadata.trigger_mode"}
     """
     from memos.config.models import get_memos_home
 
@@ -961,18 +892,21 @@ def _save_injected_records(pid: str, records: list) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 标准化记录字段
+    # 标准化记录字段（兼容两种格式：知识库召回 id+document，手工建议 source_memory_id+content）
     normalized = []
     now = time.time()
     for r in records:
         meta = r.get("metadata", {}) or {}
+        record_id = r.get("id") or r.get("source_memory_id") or ""
+        content = (r.get("document") or r.get("content") or "")[:500]
+        source_type = meta.get("type") or meta.get("trigger_mode", "unknown")
         normalized.append(
             {
-                "id": r.get("id", ""),
-                "content": (r.get("document") or "")[:500],
+                "id": record_id,
+                "content": content,
                 "similarity": r.get("similarity", 0),
                 "final_score": r.get("final_score", 0),
-                "source_type": meta.get("type", "unknown"),
+                "source_type": source_type,
                 "source_date": "",
                 "timestamp": now,
                 "suggestion_type": r.get("suggestion_type", "active_push"),
@@ -989,238 +923,70 @@ def _save_injected_records(pid: str, records: list) -> None:
     logger.info("已保存 %d 条 Layer 1 注入记录到 %s", len(normalized), path)
 
 
-def main():
-    """主入口。
+# --- 三管道可导入函数（v0.5.0：供 hook_handler HTTP 模式调用）---
 
-    支持 MEMOS_USE_OLD_CONTEXT=1 环境变量回退到旧版 _build_context。
-    main() 级兜底：任何未预期异常输出 {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ""}}。
+
+def run_pipeline_1(body: dict, context_memory, project_id: str = None) -> tuple[list, list]:
+    """管道一：基于 user_input 检索知识库
+
+    入参：
+      body: {"prompt": "用户消息", ...}
+      context_memory: ContextMemory 实例
+      project_id: 项目 ID（None 时自动检测）
+
+    返回 (suggestions, context_items)：
+      - suggestions: list[dict]，建议写入 ChromaDB 的条目，suggestion_type="active_push"
+      - context_items: list[dict]，注入到 additionalContext 的 Layer 1 条目
+    不依赖 sys.stdin / sys.stdout。
     """
-    # T5: 五段分段计时（perf_counter，单调高精度）
-    _t0 = time.perf_counter()
-    _t1 = _t2 = _t3 = _t4 = _t5 = _t0
-
-    # 1. 解析用户消息（强制 UTF-8 解码避免 Windows GBK 编码问题）
-    try:
-        raw_bytes = sys.stdin.buffer.read()
-        input_data = json.loads(raw_bytes.decode("utf-8"))
-        current_msg = (input_data.get("prompt") or "").strip()
-    except Exception as e:
-        logger.warning("读取 stdin 失败: %s", e)
-        current_msg = ""
-
-    logger.debug("=== Hook 开始 ===")
+    current_msg = (body.get("prompt") or "").strip()
+    pid = project_id or _get_project_id()
     if not current_msg:
-        logger.debug("空消息，跳过")
-        return
+        return [], []
 
-    logger.info("收到用户消息 (%d 字符): %s", len(current_msg), current_msg[:500])
+    _, suggestions, context_items = _build_layered_context(context_memory, current_msg, pid)
+    return suggestions, context_items
 
-    # 2. 生成 round_id 并保存 user_input 到 ChromaDB
-    round_id = f"R_{time.time_ns()}"
-    pid = _get_project_id()
-    mem = _get_memory()
-    user_record_id = ""
 
-    if mem:
-        try:
-            user_record_id = mem.remember(
-                current_msg,
-                metadata={
-                    "type": "user_input",
-                    "project_id": pid,
-                    "project_name": PROJECT_DIR.name,
-                    "round_id": round_id,
-                    "timestamp": time.time(),
-                },
-            )
-            logger.info("已保存用户输入 round=%s, id=%s", round_id, user_record_id)
-        except Exception as e:
-            logger.error("保存用户输入失败: %s", e)
-            import traceback
+def run_pipeline_2(context_memory, project_id: str = None) -> list[dict]:
+    """管道二：系统健康检查（低质量/过期/无日报等）
 
-            logger.error(traceback.format_exc())
-    else:
-        logger.error("ContextMemory 不可用，无法保存用户输入")
+    入参：
+      context_memory: ContextMemory 实例
+      project_id: 项目 ID（None 时自动检测）
 
-    # 3. 写状态文件（供 Stop Hook 使用）
-    state = {
-        "round_id": round_id,
-        "user_record_id": user_record_id,
-        "pending_assistant": True,
-    }
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    logger.debug("已写入状态文件 round=%s", round_id)
+    返回 list[dict]，每条含 suggestion_type="system_alert"。
+    不依赖 sys.stdin / sys.stdout。
+    """
+    pid = project_id or _get_project_id()
+    return _generate_system_suggestions(context_memory, pid)
 
-    _t1 = time.perf_counter()  # stdin 阶段结束
 
-    # 4. 三管道检索与建议生成
-    additional_context = ""
-    use_old = os.environ.get("MEMOS_USE_OLD_CONTEXT") == "1"
-    all_suggestions = []
-    pipe_counts = {"active_push": 0, "system_alert": 0, "manual_trigger": 0}
-    injected_items = []  # Layer 1 注入记录（旧版路径为空）
+def run_pipeline_3(body: dict, context_memory, project_id: str = None) -> list[dict]:
+    """管道三：手工建议（基于关键词触发规则）
 
-    try:
-        if use_old:
-            logger.info("使用旧版 _build_context (MEMOS_USE_OLD_CONTEXT=1)")
-            additional_context = _build_context(mem, current_msg, pid) or ""
-        else:
-            # 管道一：分层检索（context_str 由统一排序截断后重建）
-            _, pipe1, injected_items = _build_layered_context(mem, current_msg, pid)
-            all_suggestions.extend(pipe1)
-            pipe_counts["active_push"] = len(pipe1)
-            _t2 = time.perf_counter()  # 管道一结束
+    入参：
+      body: {"prompt": "用户消息", ...}
+      context_memory: ContextMemory 实例
+      project_id: 项目 ID（None 时自动检测）
 
-            # 管道二：系统状态型建议（独立 try/except）
-            try:
-                pipe2 = _generate_system_suggestions(mem, pid)
-                all_suggestions.extend(pipe2)
-                pipe_counts["system_alert"] = len(pipe2)
-            except Exception as e:
-                logger.error("管道二生成失败: %s", e)
-            _t3 = time.perf_counter()  # 管道二结束
+    返回 list[dict]，每条含 suggestion_type="manual_trigger"。
+    不依赖 sys.stdin / sys.stdout。
+    """
+    current_msg = (body.get("prompt") or "").strip()
+    pid = project_id or _get_project_id()
+    if not current_msg or not context_memory:
+        return []
 
-            # 管道三：用户手工型建议（独立 try/except）
-            pipe3 = []
-            try:
-                pipe3 = _match_manual_suggestions(current_msg, mem, pid)
-                all_suggestions.extend(pipe3)
-                pipe_counts["manual_trigger"] = len(pipe3)
-            except Exception as e:
-                logger.error("管道三匹配失败: %s", e)
-
-            # 统一排序截断：合并 L1 + 管道三候选，按优先级排序后截断 + 重建上下文
-            # （不论管道三是否异常，都执行此合并逻辑）
-            _merge_cfg = _get_suggestion_config()
-            _max_n = _merge_cfg.max_injection_per_round
-            _candidates = []  # (source, priority, item)
-
-            # L1 知识匹配候选（优先级 3）
-            for item in injected_items:
-                _candidates.append(("knowledge", 3, item))
-            # 管道三候选：Always(1) > 关键词(2)
-            for item in pipe3:
-                _mode = (item.get("metadata", {}) or {}).get("trigger_mode", "keyword")
-                _pri = 1 if _mode == "always" else 2
-                _candidates.append(("manual", _pri, item))
-
-            # 按优先级排序 + 截断
-            _candidates.sort(key=lambda x: x[1])
-            _candidates = _candidates[:_max_n]
-
-            # 重建 additional_context + final_injected
-            _ctx_parts = []
-            _final_injected = []
-            for _src, _pri, _item in _candidates:
-                if _src == "knowledge":
-                    _ctx_parts.append(_format_context_item(_item))
-                    _meta = _item.get("metadata", {}) or {}
-                    _final_injected.append(
-                        {
-                            "id": _item.get("id", ""),
-                            "document": _item.get("document", ""),
-                            "similarity": _item.get("similarity", 0),
-                            "final_score": _item.get("final_score", _item.get("similarity", 0)),
-                            "metadata": _meta,
-                            "suggestion_type": "active_push",
-                        }
-                    )
-                else:  # manual
-                    _content = (_item.get("content") or "")[:300]
-                    _sug_meta = _item.get("metadata", {}) or {}
-                    _mode = _sug_meta.get("trigger_mode", "keyword")
-                    if _mode == "always":
-                        _kw_info = "[始终触发]"
-                    else:
-                        _raw_kw = _sug_meta.get("trigger_keywords", "[]")
-                        if isinstance(_raw_kw, str):
-                            try:
-                                _kws = json.loads(_raw_kw)
-                            except Exception:
-                                _kws = []
-                        else:
-                            _kws = _raw_kw
-                        _kw_info = f"[触发关键词: {', '.join(str(k) for k in _kws)}]" if isinstance(_kws, list) else ""
-                    _ctx_parts.append(f"  {_kw_info} {_content}")
-                    _final_injected.append(
-                        {
-                            "id": _item.get("source_memory_id", ""),
-                            "document": _content,
-                            "similarity": _item.get("similarity", 0),
-                            "final_score": _item.get("similarity", 0),
-                            "metadata": {"type": _mode},
-                            "suggestion_type": "manual_trigger",
-                        }
-                    )
-
-            # 构建 additional_context
-            if _final_injected:
-                additional_context = "--- 自动注入（按优先级排序） ---\n" + "\n".join(_ctx_parts) + "\n---"
-            else:
-                additional_context = ""
-            injected_items = _final_injected
-
-            # 合并写入
-            if all_suggestions:
-                written = _write_suggestions(mem, all_suggestions, pid, current_msg)
-            else:
-                written = 0
-
-            logger.debug("注入截断: 候选=%d, 上限=%d, 实际注入=%d", len(_candidates), _max_n, len(_final_injected))
-
-            # 汇总日志
-            pipe2_detail = ""
-            if pipe_counts["system_alert"] > 0:
-                events = [
-                    s.get("event_type", "?") for s in all_suggestions if s.get("suggestion_type") == "system_alert"
-                ]
-                pipe2_detail = f"({','.join(events)})"
-            _t4 = time.perf_counter()  # 管道三+写入结束
-
-            logger.info(
-                "suggestions: pipe1_active_push=%d, pipe2_system_alert=%d%s, pipe3_manual_trigger=%d, total_written=%d",
-                pipe_counts["active_push"],
-                pipe_counts["system_alert"],
-                pipe2_detail,
-                pipe_counts["manual_trigger"],
-                written,
-            )
-    except Exception:
-        logger.error("分层检索/写入异常，降级为空上下文", exc_info=True)
-        additional_context = ""
-        _t4 = time.perf_counter()  # 异常分支也要记录计时
-    finally:
-        # 无论正常/异常/旧版路径，都确保清理旧注入记录
-        # 避免 Dashboard 展示过时数据
-        _save_injected_records(pid, injected_items)
-
-    # 5. 输出上下文给 Claude Code（兜底：确保 stdout 始终是有效 JSON）
-    try:
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": additional_context,
-            }
-        }
-        print(json.dumps(output, ensure_ascii=False))
-    except Exception:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ""}}))
-    sys.stdout.flush()
-    _t5 = time.perf_counter()  # 输出结束
-
-    # T5: hook_timing 单行日志
-    logger.info(
-        "hook_timing: stdin=%.1fms pipe1=%.1fms pipe2=%.1fms pipe3=%.1fms output=%.1fms total=%.1fms",
-        (_t1 - _t0) * 1000,
-        (_t2 - _t1) * 1000,
-        (_t3 - _t2) * 1000,
-        (_t4 - _t3) * 1000,
-        (_t5 - _t4) * 1000,
-        (_t5 - _t0) * 1000,
-    )
-    logger.debug("=== Hook 结束 (%.0fms) ===", (_t5 - _t0) * 1000)
+    return _match_manual_suggestions(current_msg, context_memory, pid)
 
 
 if __name__ == "__main__":
-    main()
+    print(
+        "[memos] 错误：不支持直接运行 python -m memos.hooks.prompt。\n"
+        "v0.5.0 unified 模式下请使用 hook_proxy --hook 代理，\n"
+        "或确保 unified server (memos server) 已启动后通过 HTTP Hook 端点调用。\n"
+        "详见: document/50版本/analysis_unified_server_chromadb.md",
+        file=sys.stderr,
+    )
+    sys.exit(1)

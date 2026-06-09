@@ -2,26 +2,27 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.8-lightgrey)](https://pypi.org/project/memomate/)
+[![Version](https://img.shields.io/badge/version-0.5.1-lightgrey)](https://pypi.org/project/memomate/)
 
 > [English Docs](README.md)
 
-MEMOS 是为 AI 编程助手打造的轻量级 RAG 记忆系统。它能在对话中自动捕获技术决策、Bug 修复、用户偏好等信息，并在后续对话中智能召回——让 AI 助手真正"记住"你的项目。
+MEMOS 是为 AI 编程助手打造的轻量级 RAG 记忆系统。采用 **统一服务架构**（FastAPI 单进程），通过 **SSE MCP 协议** 和 **Token 认证** 提供服务，支持多用户、多项目数据隔离。
 
 ## 核心特性
 
 - **🧠 跨对话记忆** — 自动提炼对话中的知识点，跨会话持久化
-- **🔌 MCP 协议** — 12 个工具，无缝集成 Claude Code 等 AI 助手
+- **🔌 MCP via SSE** — 12 个工具，SSE 直连，令牌认证
 - **🔍 混合检索** — 向量语义（1024 维）× BM25 关键词加权 + 时间衰减排序
-- **📊 Web 仪表板** — 记忆浏览、搜索、编辑、配置管理
+- **📊 Web 仪表板** — 记忆浏览、搜索、编辑、项目管理
 - **🏗️ 四管线架构** — AI 写入 → 缓冲提炼 / 用户直写 / 自动采集 / 人工精炼
-- **🗂️ 项目隔离** — 按工作目录自动隔离，多项目互不干扰
-- **⚡ 零外部依赖** — 纯本地运行，单进程，无需数据库或云服务
+- **🗂️ 项目 + 用户隔离** — 双字段（creator_id + scope）数据隔离
+- **⚡ 客户端轻量化** — `pip install memomate`（~3MB，零 ML 依赖）
+- **🔐 多用户认证** — Token 管理，Dashboard 登录
 
 ## 前置条件
 
 - **Python 3.12+** — [下载](https://www.python.org/downloads/)
-- **pip** — Python 自带（验证：`python --version`）
+- **pip** — Python 自带
 
 创建并激活虚拟环境（推荐）：
 
@@ -37,64 +38,83 @@ source venv/bin/activate
 
 ## 快速开始
 
+### 1. 安装服务端
+
 ```bash
-pip install memomate
-memos init --force
-memos dashboard
+pip install "memomate[server]"
 ```
 
-浏览器访问 http://127.0.0.1:8000
+### 2. 启动统一服务
 
-> **Windows 用户**: 如模型下载超时，请在 `memos init` 前设置镜像源：
+```bash
+memos server
+```
+
+首次启动自动创建 admin 用户并打印 Token。浏览器访问 http://127.0.0.1:8000 打开 Dashboard。
+
+### 3. 连接 Claude Code（客户端）
+
+```bash
+pip install memomate
+memos setup --server http://<服务器地址>:8000 --token <TOKEN> --project <项目名>
+```
+
+重新加载 Claude Code，MCP 工具和 Hook 即生效。
+
+> **Windows 用户**: 如模型下载超时，请在首次启动服务前设置镜像源：
 > ```powershell
 > $env:HF_ENDPOINT = "https://hf-mirror.com"
 > ```
 
-### 集成到 Claude Code
+## 架构
 
-MEMOS 提供两种方式与 Claude Code 连接。
+```mermaid
+graph TB
+    subgraph "Claude Code (客户端)"
+        CC[Claude Code]
+        HOOK[Hook 代理<br/>hook_proxy]
+    end
 
-**方式一：Hook（推荐）**
+    subgraph "MEMOS 统一服务"
+        direction TB
+        MCP[MCP SSE<br/>/mcp/{pid}/sse]
+        HAPI[Hook API<br/>/api/hooks/*]
+        DASH[Dashboard<br/>/ + /api/*]
+        AUTH[认证层<br/>SessionAuthStore]
+        ENGINE[引擎<br/>检索 + 提炼]
+        STORE[(ChromaDB)]
+    end
 
-自动在对话中读写记忆，零配置：
-
-```bash
-memos hook install
+    CC -->|SSE + Token| MCP
+    HOOK -->|HTTP + Token| HAPI
+    CC ---->|浏览器| DASH
+    MCP --> AUTH --> ENGINE --> STORE
+    HAPI --> ENGINE --> STORE
+    DASH --> AUTH --> ENGINE --> STORE
 ```
 
-**方式二：手动注册 MCP**
+### 目录结构
 
-在项目 `.mcp.json` 中注册 MCP 服务：
-
-```json
-{
-  "mcpServers": {
-    "memos": {
-      "command": "python",
-      "args": ["-m", "memos.server"],
-      "env": {}
-    }
-  }
-}
 ```
-
-或通过 Claude Code CLI：
-
-```bash
-claude mcp add --scope project memos -- python -m memos.server
+memos/
+├── src/memos/
+│   ├── config/        配置层（Pydantic 模型 + 加载链）
+│   ├── storage/       存储抽象层（ChromaDB）
+│   ├── engine/        核心引擎（CRUD + 提炼 + BM25）
+│   ├── server/        FastAPI 统一服务（MCP Handler + SSE Wrapper）
+│   ├── web/           Web 仪表板（FastAPI + Jinja2）
+│   ├── cli/           CLI 入口（setup / server / user）
+│   ├── features/      辅助功能（备份、日报、通知）
+│   ├── hook_proxy/    Hook 代理层（认证 + project_id）
+│   └── hooks/         Hook 脚本（prompt/stop）
+├── memdb/             ChromaDB 持久化数据
+├── model/             本地嵌入模型（约 1.3GB）
+└── etc/               配置与持久化数据
 ```
-
-## 应用场景
-
-| 场景 | 效果 |
-|------|------|
-| 记住技术选型 | "我们用的是 FastAPI + SQLAlchemy" — 下次对话自动回忆 |
-| 追踪 Bug 修复 | 修复方案自动提炼为知识卡片，同类型问题不再重复排查 |
-| 统一代码风格 | 记录项目的编码约定和命名规范，AI 生成代码自动遵循 |
-| 跨会话上下文 | 即使新建对话，AI 助理仍记得项目的技术背景和决策历史 |
-| 团队知识沉淀 | 多人维护同一项目时，记忆共享，减少重复沟通 |
 
 ## MCP 工具（供 AI 助手调用）
+
+通过 SSE 协议提供 12 个工具：
 
 | 工具 | 管线 | 说明 |
 |------|------|------|
@@ -111,28 +131,13 @@ claude mcp add --scope project memos -- python -m memos.server
 | `set_project_id(pid)` | — | 切换项目空间 |
 | `log_complete_turn(user, asst)` | A | 记录完整对话轮次 |
 
-## 架构
-
-```
-AI 助手 ──MCP stdio──→ MEMOS Server
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-          知识库存储    混合检索引擎   Web 仪表板
-        (ChromaDB)   (Vector+BM25)  (FastAPI+Jinja2)
-              │            │
-              ▼            ▼
-          嵌入模型      BM25 索引
-    (bge-large-zh-v1.5)  (rank_bm25)
-```
-
 ## CLI 命令
 
 | 命令 | 说明 |
 |------|------|
-| `init` | 首次初始化向导 |
-| `dashboard` | 启动 Web 面板 |
-| `server` | 启动 MCP Server |
+| `server` | 启动统一服务（MCP + Dashboard + Hook） |
+| `setup` | 一键初始化客户端（SSE + Hook） |
+| `user add/list/remove/token-regen` | 多用户管理 |
 | `status` | 查看系统状态 |
 | `doctor` | 诊断系统健康度 |
 | `config show / set / validate` | 配置管理 |
@@ -140,13 +145,13 @@ AI 助手 ──MCP stdio──→ MEMOS Server
 | `import` | 从 JSONL 导入 |
 | `backup / restore` | 全量备份与恢复 |
 | `hook install / uninstall / status` | Hook 管理 |
-| `auth regen` | 重新生成访问令牌 |
+| `init` | 首次初始化向导 |
 | `vacuum` | 回收磁盘空间 |
 | `reindex` | 重建 BM25 索引 |
 
 ## 配置
 
-配置文件位于 `etc/config.json`，核心字段：
+配置文件 `etc/config.json`，核心字段：
 
 ```json
 {
@@ -161,12 +166,13 @@ AI 助手 ──MCP stdio──→ MEMOS Server
 }
 ```
 
-所有字段均可通过 `MEMOS_{节}_{字段}` 环境变量覆盖，无需直接编辑 JSON。
+所有字段均可通过 `MEMOS_{节}_{字段}` 环境变量覆盖。
 
 ## 系统要求
 
 - Python 3.12+
-- 约 2GB 磁盘空间（嵌入模型约 1.3GB）
+- 服务端：约 2GB 磁盘（嵌入模型约 1.3GB）
+- 客户端：约 3MB，零 ML 依赖
 - Windows / Linux / macOS
 
 ## 许可

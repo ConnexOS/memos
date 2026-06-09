@@ -45,16 +45,14 @@ def login_page(request: Request):
 def index(request: Request):
     notif_ctx = _get_notification_context()
     hdrs = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+    user_name = request.session.get("name", "")
+    ctx = {"notifications": notif_ctx, "version": memos_version, "user_name": user_name}
     if config.auth.disable:
-        return templates.TemplateResponse(
-            request, "dashboard.html", {"notifications": notif_ctx, "version": memos_version}, headers=hdrs
-        )
+        return templates.TemplateResponse(request, "dashboard.html", ctx, headers=hdrs)
     token_str = request.cookies.get("memos_session")
     if not token_str or not verify_session_token(token_str, config.auth.secret_key):
         return RedirectResponse("/login")
-    return templates.TemplateResponse(
-        request, "dashboard.html", {"notifications": notif_ctx, "version": memos_version}, headers=hdrs
-    )
+    return templates.TemplateResponse(request, "dashboard.html", ctx, headers=hdrs)
 
 
 # --- API: 记忆列表 ---

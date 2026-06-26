@@ -8,14 +8,51 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from ..config import config
 from ..engine.memory import ContextMemory
+from .task_handler import TaskEvalQueue
 
 logger = logging.getLogger(__name__)
+
+# F2: TaskEvalQueue 全局实例（lifespan 中注入依赖后启动）
+_task_queue = TaskEvalQueue()
+
+# 优雅关闭信号 — 通知 SSE 等长连接主动退出
+_shutdown_event = asyncio.Event()
+
+
+def _get_llm_caller():
+    """获取 LLM 调用函数（适配 MEMOS LLM 端点配置）。"""
+    import requests
+
+    def _call_llm(system_prompt: str, user_prompt: str) -> str | None:
+        llm_url = f"{config.llm.api_base.rstrip('/')}/chat/completions"
+        payload = {
+            "model": config.llm.active_endpoint.model or "default",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+        }
+        headers = {}
+        if config.llm.api_key:
+            headers["Authorization"] = f"Bearer {config.llm.api_key}"
+        try:
+            resp = requests.post(llm_url, json=payload, headers=headers, timeout=config.llm.request_timeout)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.error("LLM 调用失败: %s", e)
+            return None
+
+    return _call_llm
 
 
 async def _shutdown_with_timeout(app: FastAPI, timeout: int = 5):
@@ -58,7 +95,13 @@ def _make_lifespan(collection_name: str = None):
 
         admin_token = create_admin_on_first_start()
         if admin_token:
-            logger.info("[MEMOS] 首次启动, 已创建 admin 用户. Token: %s", admin_token)
+            logger.info("[MEMOS] 首次启动, 已创建 admin 用户. Token (前缀): %s...", admin_token[:8])
+            # 完整 token 仅输出到控制台（stderr），不写入日志文件
+            print(f"\n{'='*50}", file=sys.stderr)
+            print("  首次启动: 管理员 Token 已生成", file=sys.stderr)
+            print(f"  Token: {admin_token}", file=sys.stderr)
+            print("  请妥善保存此 Token，它不会再次显示", file=sys.stderr)
+            print(f"{'='*50}\n", file=sys.stderr)
 
         # 注入 ContextMemory 到 server/mcp 模块（NC5 — Phase 2.2）
         from ..server.mcp import set_memory as _inject_memory
@@ -71,24 +114,25 @@ def _make_lifespan(collection_name: str = None):
             config.model.vector_dim,
         )
 
-        # 首次启动：自动创建 admin 用户（评审 BB1：AC-M5-09 — Phase 3.1 实现）
-        try:
-            from ..web.auth import create_admin_on_first_start
-
-            admin_token = create_admin_on_first_start()
-        except (ImportError, AttributeError):
-            admin_token = None
-        if admin_token:
-            logger.info("┌──────────────────────────────────────┐")
-            logger.info("│  首次启动：管理员 Token 已生成          │")
-            logger.info("│  Token: %s", admin_token)
-            logger.info("│  请妥善保管，此 Token 仅显示一次。      │")
-            logger.info("│  使用 `memos user add` 添加团队成员。   │")
-            logger.info("└──────────────────────────────────────┘")
+        # F2: 注入 TaskEvalQueue 依赖并启动
+        _task_queue._memory = context_memory
+        _task_queue._llm_caller = _get_llm_caller()
+        _task_queue.start()
+        app.state.task_queue = _task_queue
+        logger.info("[MEMOS v0.6.0] TaskEvalQueue 已启动")
 
         yield
 
         # === 关闭阶段 ===
+        # 通知长连接（SSE 等）主动退出，等待最长检测周期后自然关闭
+        _shutdown_event.set()
+        from ..web.routes.v2_routes import _get_sse_shutdown_ev
+
+        _get_sse_shutdown_ev().set()
+        logger.info("[MEMOS] 关闭信号已广播，等待长连接退出")
+        await asyncio.sleep(2.5)  # 覆盖 SSE 内部 2s 检测周期 + 缓冲
+        _task_queue.stop()
+        logger.info("[MEMOS v0.6.0] TaskEvalQueue 已停止")
         await _shutdown_with_timeout(app, timeout=5)
 
     return lifespan
@@ -162,6 +206,25 @@ def create_unified_app(collection_name: str = None) -> FastAPI:
     from ..server.mcp_handler import health
 
     app.add_api_route("/api/health", health, methods=["GET"])
+
+    # F2: Task Eval 接收端点（Stop Hook 转发 TASK_EVAL → 异步队列）
+
+    @app.post("/api/task/eval")
+    async def receive_task_eval(request: Request):
+        body = await request.json()
+        task_eval = body.get("task_eval")
+        session_id = body.get("session_id", "")
+        project_id = body.get("project_id", "")
+
+        if not task_eval:
+            return JSONResponse({"error": "缺少 task_eval"}, status_code=400)
+
+        for key in ("done", "todo", "blocked"):
+            if key not in task_eval:
+                task_eval[key] = []
+
+        _task_queue.enqueue(task_eval, session_id, project_id)
+        return JSONResponse({"status": "queued"}, status_code=200)
 
     logger.info("MEMOS Unified Server 初始化完成")
     return app

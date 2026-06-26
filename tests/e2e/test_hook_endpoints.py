@@ -28,8 +28,6 @@ class TestPromptNormalResponse:
         data = resp.json()
         assert "additional_context" in data
         assert isinstance(data["additional_context"], str)
-        assert "suggestions" in data
-        assert isinstance(data["suggestions"], list)
 
     def test_minimal_body(self, unified_client):
         """仅 user_input 的最小请求"""
@@ -43,7 +41,6 @@ class TestPromptNormalResponse:
         assert resp.status_code == 200
         data = resp.json()
         assert data["additional_context"] == ""
-        assert data["suggestions"] == []
 
     def test_with_assistant_output(self, unified_client):
         """同时传入 user_input 和 assistant_output"""

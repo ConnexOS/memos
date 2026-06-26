@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from pathlib import Path
@@ -24,7 +25,15 @@ from .auth import verify_session_token
 from .utils import detect_project_id
 
 # 确保所有 memos.* logger 的 info 日志能输出
+# 注：uvicorn 启动后可能通过 dictConfig 覆盖 root logger 配置，
+# 因此直接为 memos logger 添加显式 handler（不受 uvicorn dictConfig 影响）
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+_memos_logger = logging.getLogger('memos')
+_memos_logger.handlers.clear()
+_memos_logger.addHandler(logging.StreamHandler(sys.stderr))
+_memos_logger.handlers[0].setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+_memos_logger.setLevel(logging.INFO)
+_memos_logger.propagate = False
 logger = logging.getLogger(__name__)
 
 # Jinja2 模板目录
@@ -53,7 +62,7 @@ def _invalidate_projects_cache():
 _PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/hooks/prompt", "/api/hooks/stop", "/api/health"}
 
 # 知识库类型（用于项目统计）
-_KB_TYPES = {"fact", "decision", "preference", "todo", "bug_fix", "feature_design", "code_optimize", "tech_knowledge"}
+_KB_TYPES = {"solution", "decision", "lesson", "process", "todo", "task", "briefing"}
 
 
 def _get_projects_from_db(mem: "ContextMemory") -> list[dict]:
@@ -221,6 +230,11 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(suggestions_router)
     app.include_router(system_router)
     app.include_router(todos_router)
+
+    # v0.6.0: v2 API 路由
+    from .routes.v2_routes import router as v2_router
+
+    app.include_router(v2_router)
 
     logger.info("Dashboard 路由注册完成（模块化架构 %s）", __import__("memos").__version__)
 

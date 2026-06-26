@@ -54,12 +54,38 @@ The first start automatically creates an admin user and prints a token. Open htt
 
 ### 3. Connect Claude Code (Client)
 
+On each developer machine that runs Claude Code, install the lightweight client and connect to the server:
+
+> **Single-machine setup**: If you're running both server and Claude Code on one machine, just do `pip install "memomate[server]"` (includes client). No separate `pip install memomate` needed — but running `memos setup` is still required.
+
 ```bash
+# Install client-only (~3MB, no ML dependencies)
 pip install memomate
+
+# One-click setup: generates config files and hooks
 memos setup --server http://<SERVER>:8000 --token <TOKEN> --project <项目名>
 ```
 
-Reload Claude Code — the MCP tools and Hook are ready.
+| Parameter | Description | How to get |
+|-----------|-------------|------------|
+| `--server` | MEMOS server URL | The server machine's IP: http://192.168.1.100:8000 (use `http://127.0.0.1:8000` if same machine) |
+| `--token` | Your user token | Printed by `memos server` on first start, or run `memos user token-regen <username>` on the server |
+| `--project` | Project name | Any name, e.g. `MyProject`. Used for data isolation — each project has its own memory space |
+
+**What `memos setup` generates:**
+
+| File | Path | Purpose |
+|------|------|---------|
+| `.memos-project` | Project root | Project ID maping (commit to git) |
+| `.mcp.json` | Project root | SSE connection config (**do not commit** — contains token; add to `.gitignore`) |
+| `credentials.json` | User home | Server URL + token (one per user) |
+| Hook config | `.claude/settings.json` | Auto-captures conversations to MEMOS |
+
+After setup, **reload Claude Code** (restart the session). The MCP tools and Hook will be ready.
+
+**Verify** it works:
+- Ask "what tools do you have" — memos tools (recall, remember, etc.) should appear
+- Or run `memos doctor` on the client machine to diagnose connectivity
 
 > **Windows**: If model download stalls, set `$env:HF_ENDPOINT = "https://hf-mirror.com"` before first server start.
 

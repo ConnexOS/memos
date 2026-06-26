@@ -30,12 +30,26 @@ def resolve_project_name(cwd: str) -> str:
     return _project_name_cache[cwd]
 
 
+def _find_project_file(cwd: str) -> Path | None:
+    """从 cwd 向上遍历目录树，查找 .memos-project 文件。"""
+    current = Path(cwd).resolve()
+    for _ in range(100):
+        proj_file = current / ".memos-project"
+        if proj_file.exists():
+            return proj_file
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
 def _do_resolve(cwd: str) -> tuple[str, str, str]:
     """读取 .memos-project JSON 文件，返回 (project_id, project_name, source)。"""
-    proj_file = Path(cwd) / ".memos-project"
-    if not proj_file.exists():
+    proj_file = _find_project_file(cwd)
+    if proj_file is None:
         raise FileNotFoundError(
-            f"未找到 .memos-project 文件（{proj_file}），请运行 memos setup --server <URL> --token <TOKEN> --project <项目目录> 初始化"
+            f"未找到 .memos-project 文件（从 {Path(cwd).resolve()} 向上搜索），请运行 memos setup --server <URL> --token <TOKEN> --project <项目目录> 初始化"
         )
     try:
         data = json.loads(proj_file.read_text(encoding="utf-8"))

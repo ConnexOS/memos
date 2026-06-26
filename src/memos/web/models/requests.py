@@ -9,9 +9,11 @@ from ...config import config
 # --- 记忆管理 ---
 
 
+
+
 class CreateMemoryRequest(BaseModel):
     content: str = Field(min_length=1)
-    type: str = "fact"
+    type: str = "solution"
     project_id: str | None = None
 
 
@@ -75,7 +77,7 @@ class CardItem(BaseModel):
     problem: str = ""
     solution: str = ""
     insight: str = ""
-    type: str = "tech_knowledge"
+    type: str = "process"
     quality_score: float | None = None
     quality_reason: str = ""
 
@@ -90,6 +92,8 @@ class BatchCreateCardsRequest(BaseModel):
 
 class DailyReviewRequest(BaseModel):
     date: str | None = None
+    start_ts: float | None = None  # 本地日期起始 UTC 时间戳（由前端按浏览器时区计算）
+    end_ts: float | None = None    # 本地日期结束 UTC 时间戳
     project_id: str | None = None
     llm_endpoint: str | None = None
     prompt_id: str | None = None
@@ -173,30 +177,6 @@ class TestConnectionRequest(BaseModel):
     endpoint_id: str = Field(min_length=1)
 
 
-# --- 主动建议 ---
-
-
-class SuggestionFeedbackRequest(BaseModel):
-    """建议反馈请求体。"""
-
-    feedback: str = Field(pattern=r"^(useful|not_useful)$", description="反馈类型: useful 或 not_useful")
-
-
-class SuggestionsListRequest(BaseModel):
-    """建议列表查询参数（用于文档/验证）。"""
-
-    project_id: str | None = None
-    limit: int = Field(default=20, ge=1, le=100)
-    offset: int = Field(default=0, ge=0)
-    status: str | None = None
-
-
-class DismissAllRequest(BaseModel):
-    """批量关闭请求体。"""
-
-    project_id: str | None = None
-
-
 # --- 会话记录检索 ---
 
 
@@ -218,80 +198,8 @@ class ConfigUpdateRequest(BaseModel):
     value: str | int | float | bool
 
 
-# --- 主动建议设置 ---
-
-
-class SuggestionSettingsRequest(BaseModel):
-    """建议设置请求体 — 所有字段可选（部分更新）。"""
-
-    # 管道一：知识匹配（MemoryConfig）
-    active_suggestion_threshold: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Layer 2 推送相似度阈值",
-    )
-    context_injection_threshold: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Layer 1 上下文注入阈值",
-    )
-    suggestion_max_per_day: int | None = Field(
-        default=None,
-        ge=0,
-        description="管道一每日最大推送数",
-    )
-    suggestion_max_pending: int | None = Field(
-        default=None,
-        ge=10,
-        le=200,
-        description="最大待处理建议数",
-    )
-    suggestion_display_limit: int | None = Field(
-        default=None,
-        ge=5,
-        le=100,
-        description="Dashboard 单次拉取建议数",
-    )
-    suggestion_manual_daily_limit: int | None = Field(
-        default=None,
-        ge=0,
-        le=20,
-        description="[已废弃] 管道三每日推送上限",
-    )
-    max_injection_per_round: int | None = Field(
-        default=None,
-        ge=1,
-        le=20,
-        description="每轮会话最多注入的记录数",
-    )
-
-    # 管道二：系统状态（SystemSuggestionConfig）
-    system_suggestion_enabled: bool | None = Field(
-        default=None,
-        description="管道二全局开关",
-    )
-    system_suggestion_daily_limit: int | None = Field(
-        default=None,
-        ge=0,
-        le=10,
-        description="管道二每日推送上限",
-    )
-    system_suggestion_cooldown_hours: int | None = Field(
-        default=None,
-        ge=1,
-        le=168,
-        description="管道二同类事件冷却时间（小时）",
-    )
-    system_suggestion_triggers: dict | None = Field(
-        default=None,
-        description="管道二各事件独立开关",
-    )
-
-
 class ManualSuggestionCreateRequest(BaseModel):
-    """创建手工建议请求体。"""
+    """创建用户建议请求体。"""
 
     content: str = Field(min_length=1, max_length=5000, description="建议内容")
     trigger_keywords: list[str] = Field(

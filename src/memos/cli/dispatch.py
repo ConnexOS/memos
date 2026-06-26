@@ -14,6 +14,7 @@ MEMOS CLI — 安装后的命令行入口。
 
 import argparse
 import json
+import logging
 import os
 import platform
 import sys
@@ -21,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 
 from ..errors import MemoError, format_error
+
+logger = logging.getLogger(__name__)
 
 
 def cmd_init(args):
@@ -219,10 +222,77 @@ def cmd_user(args):
         print(f"新 Token: {new_token}")
 
 
+def cmd_migrate_status(args):
+    """F5: 手动触发存量 status 迁移（active → status 三态）。"""
+    print("正在检测存量记录...")
+    from ..engine.memory import ContextMemory
+
+    mem = ContextMemory()
+
+    try:
+        results = mem.store.get(include=["metadatas"])
+        ids = results.get("ids", [])
+        metas = results.get("metadatas", [])
+    except Exception as e:
+        print(f"[ERROR] 查询失败: {e}", file=sys.stderr)
+        return
+
+    if not ids:
+        print("无记录需要迁移。")
+        return
+
+    needs_migrate = []
+    already_migrated = 0
+    for i, meta in enumerate(metas):
+        meta = meta or {}
+        if "status" in meta:
+            already_migrated += 1
+        elif "active" in meta:
+            active_val = meta.get("active")
+            archived_val = meta.get("archived", False)
+            if active_val is True or str(active_val).lower() == "true":
+                new_status = "active"
+            elif archived_val is True or str(archived_val).lower() == "true":
+                new_status = "archived"
+            else:
+                new_status = "forgotten"
+            needs_migrate.append((ids[i], new_status))
+
+    print(f"总记录: {len(ids)}")
+    print(f"已迁移: {already_migrated}")
+    print(f"待迁移: {len(needs_migrate)}")
+
+    if not needs_migrate:
+        print("所有记录已是最新格式。")
+        return
+
+    confirm = input(f"确认迁移 {len(needs_migrate)} 条记录? (y/N): ").strip().lower()
+    if confirm != "y":
+        print("已取消。")
+        return
+
+    print("正在迁移...")
+    for mem_id, status in needs_migrate:
+        mem.store.update(ids=[mem_id], metadatas=[{"status": status}])
+
+    print(f"[OK] 已完成 {len(needs_migrate)} 条记录的 status 迁移。")
+
+
 def cmd_migrate(args):
-    """迁移到 unified 模式"""
+    """迁移操作。支持 --to-unified、status 和 types 子命令。"""
+    migrate_action = getattr(args, "migrate_action", None)
+    if migrate_action == "status":
+        cmd_migrate_status(args)
+        return
+    if migrate_action == "types":
+        from .migrate import cmd_migrate_types
+
+        cmd_migrate_types(args)
+        return
+
     if not args.to_unified:
-        print("用法: memos migrate --to-unified")
+        print("用法: memos migrate --to-unified  # 迁移到 unified 模式")
+        print("       memos migrate status       # 迁移存量 active → status 三态")
         return
 
     import shutil
@@ -299,6 +369,7 @@ def cmd_server(args):
         host=cfg.server.host,
         port=cfg.server.port,
         log_level="info",
+        timeout_graceful_shutdown=3,
     )
 
 
@@ -547,7 +618,7 @@ def cmd_doctor(args):
                     ok = True
                     method = "/health"
             except Exception:
-                pass
+                logger.debug("LLM 端点 /health 请求失败，降级尝试 /chat/completions", exc_info=True)
 
             # 尝试 2：轻量 /chat/completions 调用（兼容无 /health 的服务）
             # 任何 <500 的响应（含 401 鉴权错误）均说明服务器可达
@@ -596,7 +667,6 @@ def cmd_doctor(args):
         print("  [!] 注意: ChromaDB PersistentClient 不支持多进程并发写入")
         print("        MCP Server (stdio) 和 Dashboard 不要同时对同一项目进行写操作")
         print("        同时写入可能导致 SQLite 锁冲突和数据损坏")
-        print("        v0.5.0 HTTP 模式将解决此限制")
     except Exception as e:
         print(f"  [!!] ChromaDB 并发检查失败: {e}")
 
@@ -613,7 +683,6 @@ def cmd_doctor(args):
                 f"  [OK] safetensors 安全模式已启用"
                 f" (SAFETENSORS_FAST_LOAD=0, OMP_NUM_THREADS=1, MKL_NUM_THREADS={mkl_threads})"
             )
-            print("       编码性能稍降低，但避免 Windows 多线程加载崩溃")
         else:
             print(
                 f"  [!!] safetensors 环境变量未正确设置 (SAFETENSORS_FAST_LOAD={safe_fast}, OMP_NUM_THREADS={omp_threads})"
@@ -722,13 +791,15 @@ def cmd_vacuum(args):
 def cmd_reindex(args):
     """全量重建向量索引 + BM25 索引（异常恢复用）。
     v0.4.7: 扩展为重建 ChromaDB HNSW 向量索引（修复 Error finding id 类索引损坏）。
+    v0.7.1: 支持 --batch-size 分批处理。
     """
     from ..engine.memory import ContextMemory
 
     mem = ContextMemory()
+    batch_size = getattr(args, 'batch_size', 500)
 
     # 阶段一：重建向量索引（ChromaDB HNSW）
-    print("阶段 1/3: 导出全量数据...")
+    print(f"阶段 1/3: 导出全量数据 (batch_size={batch_size})...")
     result = mem.store.reindex()
     if result["status"] == "error":
         print(f"  [ERROR] 向量索引重建失败: {result.get('error')}", file=sys.stderr)
@@ -852,7 +923,7 @@ def _handle_model_switch(cfg, new_model_name: str):
                 print("                ② memos import backup.jsonl --strategy overwrite")
                 print("                ③ memos reindex")
         except Exception:
-            pass  # ChromaDB 不可用时静默跳过
+            logger.debug("ChromaDB 不可用，跳过向量维度兼容性检查", exc_info=True)
 
 
 def _configure_llm_interactive(config):
@@ -1035,7 +1106,6 @@ def cmd_export(args):
             include_embeddings=args.include_embeddings,
             since=args.since if hasattr(args, "since") else None,
             until=args.until if hasattr(args, "until") else None,
-            review_status=args.review_status if hasattr(args, "review_status") else None,
         ):
             # 格式头部
             if "_header" in item:
@@ -1192,7 +1262,7 @@ def _detect_project_python(project_dir: Path) -> str | None:
         if project_dir.resolve() in current.parents:
             return str(current)
     except Exception:
-        pass
+        logger.debug("当前解释器路径检查失败", exc_info=True)
 
     # 2. 扫描项目下一级目录，通过 pyvenv.cfg 识别 venv
     try:
@@ -1203,7 +1273,7 @@ def _detect_project_python(project_dir: Path) -> str | None:
             if py_path.exists() and (entry / "pyvenv.cfg").exists():
                 return str(py_path.resolve())
     except Exception:
-        pass
+        logger.debug("Venv 自动检测扫描失败", exc_info=True)
 
     return None
 
@@ -1364,7 +1434,7 @@ def main():
         if sys.stdout.encoding and sys.stdout.encoding.upper() != "UTF-8":
             sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
-        pass
+        logger.debug("stdout 编码重设失败（非 UTF-8 终端）", exc_info=True)
 
     parser = argparse.ArgumentParser(prog="memos", description="长时记忆系统 CLI")
     sub = parser.add_subparsers(dest="command")
@@ -1413,8 +1483,22 @@ def main():
     sub.add_parser("logout", help="清除本地凭据（v0.5.0 unified 模式）")
 
     # migrate
-    p_migrate = sub.add_parser("migrate", help="迁移到 unified 模式（v0.5.0）")
+    p_migrate = sub.add_parser("migrate", help="迁移操作（unified / status）")
     p_migrate.add_argument("--to-unified", action="store_true", help="迁移到 unified 模式")
+    p_migrate_subs = p_migrate.add_subparsers(dest="migrate_action")
+    p_migrate_subs.add_parser("status", help="F5: 手动触发存量 active → status 三态迁移")
+    # F4: migrate types
+    p_types = p_migrate_subs.add_parser("types", help="F4: 旧 7 类型到新 6 类型迁移")
+    p_types.add_argument("--dry-run", action="store_true", help="扫描统计，不修改数据")
+    p_types.add_argument("--apply", action="store_true", help="执行自动迁移（bug_fix→solution, code_optimize→lesson）")
+    p_types.add_argument("--confirm", action="store_true", help="交互式确认模糊类型")
+    p_types.add_argument("--mapping-file", metavar="FILE", help="从 JSON 文件读取 ID→类型映射")
+    p_types.add_argument("--export-backup", metavar="FILE", help="导出旧类型记忆到 JSON 备份文件")
+    p_types.add_argument("--cleanup", action="store_true", help="清理 preference 和未映射的旧类型记忆")
+    p_types.add_argument("--purge", action="store_true", help="彻底删除残留的旧 6 类数据（自动备份），迁移完成后执行")
+    p_types.add_argument("--verify", action="store_true", help="验证迁移结果")
+    p_types.add_argument("--rollback", metavar="FILE", help="从备份文件回滚迁移")
+    p_types.add_argument("--help-types", action="store_true", help="显示 types 子命令帮助")
 
     # server
     p_server = sub.add_parser("server", help="启动 MCP Server")
@@ -1448,7 +1532,8 @@ def main():
     p_vacuum.add_argument("--purge-test", action="store_true", help="清理测试残留的 ChromaDB collection")
 
     # reindex (v0.4.7: 升级为全量重建向量索引 + BM25 索引)
-    sub.add_parser("reindex", help="全量重建向量索引和 BM25 索引（修复索引损坏）")
+    p_reindex = sub.add_parser("reindex", help="全量重建向量索引和 BM25 索引（修复索引损坏）")
+    p_reindex.add_argument("--batch-size", type=int, default=500, help="每批处理条数，默认 500")
 
     # config
     p_config = sub.add_parser("config", help="配置管理")

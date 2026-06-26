@@ -32,7 +32,7 @@ class TestConfigSchema:
             "model",
             "llm",
             "memory",
-            "buffer",
+            "suggestion",
             "dashboard",
             "server",
             "auth",
@@ -40,9 +40,8 @@ class TestConfigSchema:
             "notification",
         ]:
             assert name in schema["properties"], f"schema 缺少段: {name}"
-        # prompt 在 schema 中但为宽松的 object 类型（单独持久化管理）
-        assert "prompt" in schema["properties"]
-        assert schema["properties"]["prompt"] == {"type": "object"}
+        # agent 段应为宽松 object（可选占位）
+        assert "agent" in schema["properties"]
 
     def test_get_config_schema_llm_endpoint_inlined(self, monkeypatch, tmp_path):
         """LLMEndpoint 的 $ref 已被内联，无残留 $ref"""
@@ -75,8 +74,7 @@ class TestValidateConfig:
             "model": {"path": str(tmp_path / "model" / "bge-large-zh-v1.5"), "vector_dim": 1024},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         data.update(overrides)
@@ -178,8 +176,7 @@ class TestMemoConfigLoad:
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:
@@ -205,8 +202,7 @@ class TestMemoConfigLoad:
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(bak_path, "w", encoding="utf-8") as f:
@@ -235,8 +231,7 @@ class TestMemoConfigLoad:
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(bak_path, "w", encoding="utf-8") as f:
@@ -287,8 +282,7 @@ class TestCLIConfigValidate:
             "model": {"path": str(home / "model" / "bge-large-zh-v1.5")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
@@ -315,8 +309,7 @@ class TestCLIConfigValidate:
             "model": {"path": str(home / "model"), "vector_dim": "bad"},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
@@ -341,8 +334,7 @@ class TestCLIConfigValidate:
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_file, "w", encoding="utf-8") as f:
@@ -426,8 +418,7 @@ class TestAgentConfig:
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:
@@ -452,8 +443,7 @@ class TestAgentConfig:
             "model": {"path": str(tmp_path / "model")},
             "llm": {"endpoints": [{"name": "default"}], "active": "default"},
             "memory": {},
-            "buffer": {},
-            "dashboard": {},
+                        "dashboard": {},
             "server": {},
         }
         with open(config_path, "w", encoding="utf-8") as f:

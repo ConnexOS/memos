@@ -167,7 +167,7 @@ def _get_target_dir(target: str = None) -> Path:
         if hasattr(config, "backup") and config.backup.target_dir:
             return Path(config.backup.target_dir)
     except Exception:
-        pass
+        logger.debug("备份: 读取配置 target_dir 失败，使用默认值", exc_info=True)
     return Path(_DEFAULT_TARGET_DIR)
 
 
@@ -179,7 +179,7 @@ def _get_max_backups() -> int:
         if hasattr(config, "backup"):
             return config.backup.max_backups
     except Exception:
-        pass
+        logger.debug("备份: 读取配置 max_backups 失败，使用默认值", exc_info=True)
     return _DEFAULT_MAX_BACKUPS
 
 
@@ -191,7 +191,7 @@ def _get_verify_flag() -> bool:
         if hasattr(config, "backup"):
             return config.backup.verify_after_backup
     except Exception:
-        pass
+        logger.debug("备份: 读取配置 verify_after_backup 失败，使用默认值", exc_info=True)
     return True
 
 

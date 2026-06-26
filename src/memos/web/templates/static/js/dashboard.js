@@ -33,6 +33,30 @@ const state = {
         loadingTimer: null,
         loadingSeconds: 0,
     },
+
+    // F6: 记忆管理
+    mm: {
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        typeFilter: '',      // '' = 全部
+        searchQuery: '',
+        statusFilter: 'active',  // active / forgotten
+    },
+
+    // v0.7.1 简报聚合视图
+    brf: {
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        statsCache: null,
+        latestDate: null,
+        _todayData: null,
+        _sseTimer: null,
+        _allExpanded: false,
+    },
 };
 
 // 将 state 暴露到全局，供 api-client.js 等模块读取 currentProject
@@ -52,6 +76,7 @@ function toast(msg, type='success') {
     el.addEventListener('hidden.bs.toast', () => el.remove());
 }
 
+// 相对时间格式（所有面板统一使用）
 function timeAgo(ts) {
     const diff = Date.now() / 1000 - ts;
     if (diff < 60) return '刚刚';
@@ -66,6 +91,9 @@ function escapeHtml(text) {
     d.textContent = text;
     return d.innerHTML;
 }
+
+// v0.7.1: P10 — 面板加载去重标记，防止事件重复触发
+var _panelLoaded = {};
 
 function scoreBadge(s) {
     // 质量评分 0-1 → 颜色: 绿(>=0.8) 黄(>=0.5) 红(<0.5)
@@ -95,11 +123,73 @@ const TYPE_COLORS = {
     'code_optimize': 'bg-secondary',
     'tech_knowledge': 'bg-dark',
 };
+// F6: v0.6.0 新 6 类型
+const NEW_TYPE_LABELS = {
+    'solution': '方案',
+    'decision': '决策',
+    'lesson': '经验',
+    'process': '流程',
+    'task': '任务',
+    'briefing': '简报',
+};
+const NEW_TYPE_COLORS = {
+    'solution': 'bg-success',
+    'decision': 'bg-warning',
+    'lesson': 'bg-info',
+    'process': 'bg-primary',
+    'task': 'bg-secondary',
+    'briefing': 'bg-danger',
+};
+
+// F6: 旧版 7 类型列表（用于标记 旧版 徽章）
+const LEGACY_TYPES = ['fact', 'preference', 'bug_fix', 'feature_design', 'code_optimize', 'tech_knowledge'];
+
+// v0.7.1: Task 和简报类型由专用面板管理，从记忆管理查询中剔除
+const NEW_6_TYPES = ['solution', 'decision', 'lesson', 'process'];
+
+// 全量类型列表（用于查询全部）
+const ALL_MM_TYPES = [...NEW_6_TYPES, ...LEGACY_TYPES];
+
+function getTypeLabel(type) {
+    return NEW_TYPE_LABELS[type] || TYPE_LABELS[type] || type || '?';
+}
+
+function getTypeColor(type) {
+    return NEW_TYPE_COLORS[type] || TYPE_COLORS[type] || 'bg-secondary';
+}
+
+function isLegacyType(type) {
+    return LEGACY_TYPES.includes(type);
+}
+
+function formatDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function formatTime(ts) {
     if (!ts) return '';
     const d = new Date(ts * 1000);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
+// v0.7.1: 骨架屏加载态
+function renderSkeleton(type) {
+    if (type === 'list') {
+        return '<div class="p-3">' +
+            '<div class="skeleton skeleton-line"></div>' +
+            '<div class="skeleton skeleton-line"></div>' +
+            '<div class="skeleton skeleton-line"></div>' +
+            '</div>';
+    }
+    if (type === 'card') {
+        return '<div class="p-3">' +
+            '<div class="skeleton skeleton-card"></div>' +
+            '<div class="skeleton skeleton-card"></div>' +
+            '</div>';
+    }
+    return '<div class="p-3"><div class="skeleton skeleton-line"></div></div>';
 }
 
 // --- API 调用 ---
@@ -155,7 +245,7 @@ async function loadMemories() {
     if (state.kb.typeFilter) {
         params.append('type', state.kb.typeFilter);
     } else {
-        ['fact', 'decision', 'preference', 'bug_fix', 'feature_design', 'code_optimize', 'tech_knowledge'].forEach(t => params.append('type', t));
+        ['solution', 'decision', 'lesson', 'process', 'task', 'briefing'].forEach(t => params.append('type', t));
     }
     if (state.kb.sourceFilter) params.set('source', state.kb.sourceFilter);
     if (state.kb.sourceDays) params.set('days', state.kb.sourceDays);
@@ -172,6 +262,8 @@ async function loadMemories() {
 
 function renderMemories() {
     const tbody = document.getElementById('kb-tbody');
+    // F6: 旧面板已替换，如果元素不存在则静默跳过
+    if (!tbody) return;
     if (!state.kb.items.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-4">暂无记忆</td></tr>';
         updateBatchDeleteBtn();
@@ -212,6 +304,7 @@ function renderMemories() {
 // --- 知识库分页 ---
 function renderPagination() {
     const nav = document.getElementById('kb-pagination-nav');
+    if (!nav) return;
     if (state.kb.items.length === 0 && state.kb.page === 1) {
         nav.innerHTML = '';
         return;
@@ -239,24 +332,16 @@ async function goPage(page) {
 }
 
 // --- 详情/编辑 ---
-const AUTO_TYPE_OPTIONS = [
-    {value: 'fact', label: '事实'},
+// v0.7.1: Task 和简报由专用面板管理，从手工添加选项中移除
+const TYPE_OPTIONS = [
+    {value: 'solution', label: '方案'},
     {value: 'decision', label: '决策'},
-    {value: 'preference', label: '偏好'},
-];
-
-const MANUAL_TYPE_OPTIONS = [
-    {value: 'bug_fix', label: '故障修复'},
-    {value: 'feature_design', label: '功能设计'},
-    {value: 'code_optimize', label: '代码优化'},
-    {value: 'tech_knowledge', label: '技术认知'},
+    {value: 'lesson', label: '经验教训'},
+    {value: 'process', label: '流程'},
 ];
 
 function _getTypeGroup(type) {
-    if (['bug_fix', 'feature_design', 'code_optimize', 'tech_knowledge'].includes(type)) {
-        return MANUAL_TYPE_OPTIONS;
-    }
-    return AUTO_TYPE_OPTIONS;
+    return TYPE_OPTIONS;
 }
 
 async function openDetail(id) {
@@ -348,7 +433,7 @@ document.getElementById('add-save-btn')?.addEventListener('click', async functio
 
         bootstrap.Modal.getInstance(document.getElementById('addModal')).hide();
         document.getElementById('add-content').value = '';
-        await Promise.all([loadMemories(), loadConversations()]);
+        await Promise.all([loadMemories(), loadConversations(), loadMemoryManagement()]);
         loadConflictCount();
         setTimeout(loadConflictCount, 8000);  // 等异步冲突检测完成
     } catch (e) {
@@ -721,8 +806,9 @@ async function doConvSearch() {
     try {
         const dateFromStr = document.getElementById('conv-search-date-from').value;
         const dateToStr = document.getElementById('conv-search-date-to').value;
-        const dateFrom = dateFromStr ? new Date(dateFromStr).getTime() / 1000 : null;
-        const dateTo = dateToStr ? (new Date(dateToStr).getTime() + 86400000) / 1000 : null;
+        // 使用本地时区解释日期（new Date("YYYY-MM-DD") 会按 UTC 午夜处理，导致 UTC+8 上午 8 点前的记录被漏掉）
+        const dateFrom = dateFromStr ? new Date(dateFromStr + 'T00:00:00').getTime() / 1000 : null;
+        const dateTo = dateToStr ? new Date(dateToStr + 'T23:59:59').getTime() / 1000 : null;
         const data = await apiClient.request('/api/conversations/search', {
             method: 'POST',
             body: JSON.stringify({
@@ -807,6 +893,7 @@ function renderSourceFilterBadge() {
 
 function updateKbCountLabel() {
     const label = document.getElementById('kb-count-label');
+    if (!label) return;
     const cur = state.projects.find(p => p.project_id === state.currentProject);
     if (cur) {
         label.textContent = `知识库: ${cur.knowledge_count || 0} 条`;
@@ -815,11 +902,724 @@ function updateKbCountLabel() {
     }
 }
 
+// ====== F6: 记忆管理 ======
+
+async function loadMemoryManagement() {
+    const params = new URLSearchParams();
+    params.set('limit', state.mm.pageSize);
+    params.set('offset', (state.mm.page - 1) * state.mm.pageSize);
+    params.set('status', state.mm.statusFilter);
+
+    // 类型过滤
+    if (state.mm.typeFilter) {
+        params.append('type', state.mm.typeFilter);
+    } else {
+        // 全部类型
+        ALL_MM_TYPES.forEach(t => params.append('type', t));
+    }
+
+    // 搜索 keyword 使用 /api/search 而非 /api/memories
+    if (state.mm.searchQuery.trim()) {
+        await _searchMemories(state.mm.searchQuery.trim());
+        return;
+    }
+
+    try {
+        const data = await apiClient.request(`/api/memories?${params}`);
+        state.mm.items = data.memories || [];
+        state.mm.total = data.total || 0;
+        renderMemoryCards();
+        renderMMPagination();
+        updateMMStatusLabel();
+        updateMMStats();
+    } catch (e) {
+        document.getElementById('mm-card-container').innerHTML =
+            `<div class="col-12 text-center text-danger small py-4">加载失败: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+async function _searchMemories(query) {
+    try {
+        const data = await apiClient.request('/api/search', {
+            method: 'POST',
+            body: JSON.stringify({
+                query,
+                top_k: 50,
+                hybrid: true,
+                bm25_weight: 0.7,
+                type_filter: state.mm.typeFilter || null,
+            }),
+        });
+        // 转换搜索结果格式为记忆列表格式
+        state.mm.items = (data.results || []).map(r => ({
+            id: r.id,
+            document: r.document,
+            metadata: r.metadata || {},
+        }));
+        state.mm.total = state.mm.items.length;
+        renderMemoryCards();
+        renderMMPagination();
+        updateMMStatusLabel();
+    } catch (e) {
+        document.getElementById('mm-card-container').innerHTML =
+            `<div class="col-12 text-center text-danger small py-4">搜索失败: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderMemoryCards() {
+    const container = document.getElementById('mm-card-container');
+    const items = state.mm.items;
+    if (!items || items.length === 0) {
+        container.innerHTML = '<div class="col-12 text-center text-secondary py-5"><i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:.5rem;"></i><span>暂无记忆</span></div>';
+        return;
+    }
+
+    container.innerHTML = items.map((m, idx) => {
+        const meta = m.metadata || {};
+        const type = meta.type || 'unknown';
+        const typeLabel = getTypeLabel(type);
+        const typeColor = getTypeColor(type);
+        const isLegacy = isLegacyType(type);
+        const ts = meta.timestamp;
+
+        // 全文显示（不截断）
+        const displayText = m.document || '';
+
+        // 计算距离遗忘自动归档天数
+        let countdownHtml = '';
+        if (state.mm.statusFilter === 'forgotten' && meta.forgotten_at) {
+            const daysSinceForgotten = (Date.now() / 1000 - meta.forgotten_at) / 86400;
+            const archiveDays = 25;
+            const daysLeft = Math.max(0, Math.ceil(archiveDays - daysSinceForgotten));
+            if (daysLeft > 0) {
+                countdownHtml = `<span class="badge bg-warning text-dark ms-1">${daysLeft} 天后自动归档</span>`;
+            } else {
+                countdownHtml = `<span class="badge bg-danger ms-1">即将自动归档</span>`;
+            }
+        }
+
+        // 动作按钮
+        let actionBtns = '';
+        if (state.mm.statusFilter === 'forgotten') {
+            actionBtns = `
+                <button class="btn btn-sm btn-outline-success mm-restore-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="恢复"><i class="bi bi-arrow-counterclockwise"></i></button>
+                <button class="btn btn-sm btn-outline-danger mm-delete-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="永久删除"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-sm btn-outline-warning mm-archive-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="永久归档"><i class="bi bi-archive"></i></button>
+            `;
+        } else {
+            actionBtns = `
+                <button class="btn btn-sm btn-outline-info mm-detail-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="查看/编辑"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-warning mm-forget-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="遗忘"><i class="bi bi-eye-slash"></i></button>
+                <button class="btn btn-sm btn-outline-danger mm-delete-btn py-0 px-1" data-id="${escapeHtml(m.id)}" title="永久删除"><i class="bi bi-trash"></i></button>
+            `;
+        }
+
+        return `<div class="col-12 mb-2">
+            <div class="card h-100 mm-card" data-id="${escapeHtml(m.id)}">
+                <div class="card-body py-2 px-3">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div class="d-flex gap-1 align-items-center flex-wrap">
+                            <span class="badge ${typeColor} bg-opacity-25 ${typeColor.replace('bg-', 'text-')}">${escapeHtml(typeLabel)}</span>
+                            ${isLegacy ? '<span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size:.65rem;">旧版</span>' : ''}
+                            ${countdownHtml}
+                            <span class="small text-secondary" style="font-size:.75rem;">${formatTime(ts)}</span>
+                        </div>
+                        <div class="d-flex gap-1 flex-shrink-0">
+                            ${actionBtns}
+                        </div>
+                    </div>
+                    <div class="mm-card-content small" style="word-break:break-word;">${escapeHtml(displayText)}</div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// --- 分页 ---
+function renderMMPagination() {
+    const nav = document.getElementById('mm-pagination-nav');
+    if (!nav) return;
+    if (state.mm.total === 0 && state.mm.page === 1) {
+        nav.innerHTML = '';
+        return;
+    }
+    const totalPages = Math.ceil(state.mm.total / state.mm.pageSize) || 1;
+    let html = `<span class="small text-secondary me-2">${state.mm.page}/${totalPages}</span>`;
+    html += `<button class="btn btn-sm btn-outline-secondary py-0" onclick="goMMPage(${state.mm.page - 1})" ${state.mm.page <= 1 ? 'disabled' : ''}><i class="bi bi-chevron-left"></i></button>`;
+    const start = Math.max(1, state.mm.page - 2);
+    const end = Math.min(totalPages, state.mm.page + 2);
+    for (let p = start; p <= end; p++) {
+        html += `<button class="btn btn-sm ${p === state.mm.page ? 'btn-primary' : 'btn-outline-secondary'} py-0 ms-1" onclick="goMMPage(${p})">${p}</button>`;
+    }
+    html += `<button class="btn btn-sm btn-outline-secondary py-0 ms-1" onclick="goMMPage(${state.mm.page + 1})" ${state.mm.page >= totalPages ? 'disabled' : ''}><i class="bi bi-chevron-right"></i></button>`;
+    nav.innerHTML = html;
+}
+
+async function goMMPage(page) {
+    if (page < 1) return;
+    state.mm.page = page;
+    try {
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('加载失败: ' + e.message, 'danger');
+    }
+}
+
+function updateMMStatusLabel() {
+    const label = document.getElementById('mm-status-label');
+    if (!label) return;
+    const total = state.mm.total;
+    const showing = state.mm.items.length;
+    const filterLabel = state.mm.typeFilter ? getTypeLabel(state.mm.typeFilter) : '全部';
+    const statusLabel = state.mm.statusFilter === 'forgotten' ? '已遗忘' : '活跃';
+    const searchSuffix = state.mm.searchQuery.trim() ? ` · 搜索: "${escapeHtml(state.mm.searchQuery.trim())}"` : '';
+    label.textContent = `${statusLabel}记忆 · ${filterLabel} · 共 ${total} 条 (显示 ${showing} 条)${searchSuffix}`;
+}
+
+async function updateMMStats() {
+    try {
+        function statsUrl(status) {
+            const params = new URLSearchParams();
+            params.set('limit', status === 'forgotten' ? '100' : '1');
+            params.set('status', status);
+            ALL_MM_TYPES.forEach(t => params.append('type', t));
+            return '/api/memories?' + params.toString();
+        }
+        const [activeData, forgottenResp, archivedData] = await Promise.all([
+            apiClient.request(statsUrl('active')),
+            apiClient.request(statsUrl('forgotten')),
+            apiClient.request(statsUrl('archived')),
+        ]);
+        const activeTotal = activeData.total || 0;
+        const forgottenTotal = forgottenResp.total || 0;
+        const archivedTotal = archivedData.total || 0;
+
+        // 待归档：forgotten_at + 25d < now 的条数
+        const forgottenItems = forgottenResp.memories || [];
+        const now = Date.now() / 1000;
+        const expiringCount = forgottenItems.filter(m => {
+            const fa = (m.metadata || {}).forgotten_at || 0;
+            return fa > 0 && (now - fa) > 25 * 86400;
+        }).length;
+
+        const curStatus = state.mm.statusFilter;
+        document.getElementById('mm-stat-total').innerHTML =
+            `<a href="#" onclick="switchMMStatus('active');return false;" class="text-decoration-none ${curStatus === 'active' ? 'text-primary fw-bold' : 'text-light'}">${activeTotal}</a>`;
+        document.getElementById('mm-stat-forgotten').innerHTML =
+            `<a href="#" onclick="switchMMStatus('forgotten');return false;" class="text-decoration-none ${curStatus === 'forgotten' ? 'text-primary fw-bold' : 'text-light'}">${forgottenTotal}</a>`;
+        document.getElementById('mm-stat-archived').innerHTML =
+            `<a href="#" onclick="switchMMStatus('archived');return false;" class="text-decoration-none ${curStatus === 'archived' ? 'text-primary fw-bold' : 'text-light'}">${archivedTotal}</a>`;
+        document.getElementById('mm-stat-expiring').innerHTML =
+            `<a href="#" onclick="switchMMStatus('forgotten');return false;" class="text-decoration-none ${curStatus === 'forgotten' ? 'text-primary fw-bold' : 'text-light'}">${expiringCount}</a>`;
+    } catch (e) {
+        console.warn('更新统计失败:', e);
+    }
+}
+
+// --- 状态筛选切换 ---
+function switchMMStatus(status) {
+    state.mm.statusFilter = status;
+    state.mm.page = 1;
+    loadMemoryManagement().catch(e => toast('加载失败: ' + e.message, 'danger'));
+}
+
+// --- 查看详情 ---
+async function showMemoryDetail(id) {
+    try {
+        const m = await apiClient.request(`/api/memories/${id}`);
+        const meta = m.metadata || {};
+        const type = meta.type || 'unknown';
+        const typeLabel = getTypeLabel(type);
+        const typeColor = getTypeColor(type);
+        const isLegacy = isLegacyType(type);
+
+        // 构建详情HTML
+        const detailHtml = `
+            <div class="mb-3">
+                <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+                    <span class="badge ${typeColor} bg-opacity-25 ${typeColor.replace('bg-', 'text-')}" style="font-size:.9rem;">${escapeHtml(typeLabel)}</span>
+                    ${isLegacy ? '<span class="badge bg-secondary">旧版</span>' : ''}
+                    <span class="small text-secondary">${formatTime(meta.updated_at || meta.timestamp)}</span>
+                    <span class="badge ${meta.status === 'active' ? 'bg-success' : meta.status === 'forgotten' ? 'bg-warning text-dark' : 'bg-secondary'}">${meta.status || 'active'}</span>
+                </div>
+            <div class="mb-2">
+                <div class="small fw-semibold mb-1">元数据</div>
+                <table class="table table-sm table-borderless small mb-0">
+                    <tr><td class="text-secondary" style="width:120px;">类型</td><td>${escapeHtml(typeLabel)} (${escapeHtml(type)})</td></tr>
+                    ${meta.quality_score != null ? `<tr><td class="text-secondary">质量评分</td><td>${(meta.quality_score * 100).toFixed(0)}分 ${meta.quality_reason ? '(' + escapeHtml(meta.quality_reason) + ')' : ''}</td></tr>` : ''}
+                    ${meta.source ? `<tr><td class="text-secondary">来源</td><td>${escapeHtml(meta.source)}</td></tr>` : ''}
+                    ${meta.reuse_count != null ? `<tr><td class="text-secondary">复用次数</td><td>${meta.reuse_count}</td></tr>` : ''}
+                    ${meta.timestamp ? `<tr><td class="text-secondary">创建时间</td><td>${formatTime(meta.timestamp)}</td></tr>` : ''}
+                    ${meta.forgotten_at ? `<tr><td class="text-secondary">遗忘时间</td><td>${formatTime(meta.forgotten_at)}</td></tr>` : ''}
+                    ${meta.inactive_reason ? `<tr><td class="text-secondary">状态原因</td><td>${escapeHtml(meta.inactive_reason)}</td></tr>` : ''}
+                    ${meta.linked_error_pattern ? `<tr><td class="text-secondary">关联错误模式</td><td>${escapeHtml(meta.linked_error_pattern)}</td></tr>` : ''}
+                    ${meta.briefing_date ? `<tr><td class="text-secondary">简报日期</td><td>${escapeHtml(meta.briefing_date)}</td></tr>` : ''}
+                    ${meta.project_id ? `<tr><td class="text-secondary">项目ID</td><td><code>${escapeHtml(meta.project_id)}</code></td></tr>` : ''}
+                </table>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small fw-bold">编辑内容</label>
+                <textarea class="form-control form-control-sm" id="mm-edit-content" rows="6">${escapeHtml(m.document || '')}</textarea>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small fw-bold">编辑类型</label>
+                <select class="form-select form-select-sm" id="mm-edit-type" ${type === 'task' ? 'disabled' : ''}>
+                    ${NEW_6_TYPES.map(t =>
+                        `<option value="${t}"${t === type ? ' selected' : ''}>${escapeHtml(getTypeLabel(t))} (${t})</option>`
+                    ).join('')}
+                </select>
+                ${type === 'task' ? '<div class="small text-secondary mt-1">Task 类型不可更改</div>' : ''}
+            </div>
+        `;
+
+        const modal = document.getElementById('mm-detail-modal');
+        if (!modal) {
+            // 创建详情模态框
+            _createDetailModal(detailHtml, id, meta);
+        } else {
+            document.getElementById('mm-detail-body').innerHTML = detailHtml;
+            modal.dataset.memoryId = id;
+            new bootstrap.Modal(modal).show();
+        }
+    } catch (e) {
+        toast('加载详情失败: ' + e.message, 'danger');
+    }
+}
+
+function _createDetailModal(html, id, meta) {
+    const modalHtml = `
+    <div class="modal fade" id="mm-detail-modal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-info-circle me-1"></i>记忆详情</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="mm-detail-body">${html}</div>
+                <div class="modal-footer d-flex justify-content-between">
+                    <div class="d-flex gap-1">
+                        <button type="button" class="btn btn-sm btn-outline-success mm-restore-from-detail" data-id="${escapeHtml(id)}">恢复</button>
+                        <button type="button" class="btn btn-sm btn-outline-warning mm-archive-from-detail" data-id="${escapeHtml(id)}">归档</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger mm-delete-from-detail" data-id="${escapeHtml(id)}">永久删除</button>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-sm btn-primary" id="mm-save-edit-btn" data-id="${escapeHtml(id)}">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = modalHtml;
+    document.body.appendChild(wrapper.firstElementChild);
+    const modal = document.getElementById('mm-detail-modal');
+    modal.dataset.memoryId = id;
+    new bootstrap.Modal(modal).show();
+}
+
+// --- 保存编辑 ---
+document.addEventListener('click', function(e) {
+    const saveBtn = e.target.closest('#mm-save-edit-btn');
+    if (!saveBtn) return;
+    const id = saveBtn.dataset.id || document.getElementById('mm-detail-modal')?.dataset?.memoryId;
+    if (!id) { toast('无法获取记忆ID', 'danger'); return; }
+    const content = document.getElementById('mm-edit-content')?.value?.trim();
+    const type = document.getElementById('mm-edit-type')?.value;
+    if (!content) { toast('内容不能为空', 'warning'); return; }
+    _saveMemoryEdit(id, content, type);
+});
+
+async function _saveMemoryEdit(id, content, type) {
+    try {
+        await apiClient.request(`/api/memories/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({content, type}),
+        });
+        toast('记忆已更新');
+        bootstrap.Modal.getInstance(document.getElementById('mm-detail-modal'))?.hide();
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('更新失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 遗忘 ---
+async function forgetMemory(id) {
+    if (!confirm('确定要将此记忆标记为"遗忘"吗？可在已遗忘列表中恢复。')) return;
+    try {
+        await apiClient.request(`/api/memories/${id}/forget`, {method: 'POST'});
+        toast('记忆已标记为遗忘');
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 恢复 ---
+async function restoreMemory(id) {
+    try {
+        await apiClient.request(`/api/memories/${id}/restore`, {method: 'POST'});
+        toast('记忆已恢复');
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('恢复失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 永久归档 ---
+async function archiveMemory(id) {
+    if (!confirm('确定要将此记忆永久归档吗？归档后不再出现在活跃列表中。')) return;
+    try {
+        await apiClient.request(`/api/memories/${id}/archive`, {method: 'POST'});
+        toast('记忆已永久归档');
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('归档失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 硬删除（需确认） ---
+async function deleteMemory(id) {
+    if (!confirm('确定要永久删除此记忆吗？此操作不可恢复！')) return;
+    try {
+        await apiClient.request(`/api/memories/${id}`, {method: 'DELETE'});
+        toast('记忆已永久删除');
+        await loadMemoryManagement();
+    } catch (e) {
+        toast('删除失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 事件绑定：类型过滤 pills ---
+document.addEventListener('click', function(e) {
+    const pill = e.target.closest('.mm-type-pill');
+    if (!pill) return;
+    const type = pill.dataset.type || '';
+    // 更新 pills 样式
+    document.querySelectorAll('.mm-type-pill').forEach(p => {
+        p.classList.remove('btn-primary');
+        p.classList.add('btn-outline-secondary');
+    });
+    pill.classList.remove('btn-outline-secondary');
+    pill.classList.add('btn-primary');
+    state.mm.typeFilter = type;
+    state.mm.page = 1;
+    loadMemoryManagement().catch(e => toast('加载失败: ' + e.message, 'danger'));
+});
+
+// --- 搜索事件 ---
+document.getElementById('mm-search-query')?.addEventListener('input', function() {
+    // 用户输入后延迟搜索 (debounce 300ms)
+    clearTimeout(this._searchTimer);
+    this._searchTimer = setTimeout(() => {
+        state.mm.searchQuery = this.value;
+        state.mm.page = 1;
+        loadMemoryManagement().catch(e => toast('搜索失败: ' + e.message, 'danger'));
+    }, 300);
+});
+
+document.getElementById('mm-search-clear')?.addEventListener('click', function() {
+    document.getElementById('mm-search-query').value = '';
+    state.mm.searchQuery = '';
+    state.mm.page = 1;
+    loadMemoryManagement().catch(e => toast('加载失败: ' + e.message, 'danger'));
+});
+
+// --- 事件绑定：记忆操作按钮（委托） ---
+document.addEventListener('click', function(e) {
+    // 查看详情
+    const detailBtn = e.target.closest('.mm-detail-btn');
+    if (detailBtn) {
+        const id = detailBtn.dataset.id;
+        showMemoryDetail(id);
+        return;
+    }
+
+    // 遗忘
+    const forgetBtn = e.target.closest('.mm-forget-btn');
+    if (forgetBtn) {
+        const id = forgetBtn.dataset.id;
+        forgetMemory(id);
+        return;
+    }
+
+    // 恢复（卡片）
+    const restoreBtn = e.target.closest('.mm-restore-btn');
+    if (restoreBtn) {
+        const id = restoreBtn.dataset.id;
+        restoreMemory(id);
+        return;
+    }
+
+    // 归档（卡片）
+    const archiveBtn = e.target.closest('.mm-archive-btn');
+    if (archiveBtn) {
+        const id = archiveBtn.dataset.id;
+        archiveMemory(id);
+        return;
+    }
+
+    // 删除（卡片）
+    const deleteBtn = e.target.closest('.mm-delete-btn');
+    if (deleteBtn) {
+        const id = deleteBtn.dataset.id;
+        deleteMemory(id);
+        return;
+    }
+});
+
+// --- 详情模态框的恢复/归档/删除按钮委托 ---
+document.addEventListener('click', function(e) {
+    const restoreBtn = e.target.closest('.mm-restore-from-detail');
+    if (restoreBtn) {
+        const id = restoreBtn.dataset.id;
+        bootstrap.Modal.getInstance(document.getElementById('mm-detail-modal'))?.hide();
+        restoreMemory(id);
+        return;
+    }
+    const archiveBtn = e.target.closest('.mm-archive-from-detail');
+    if (archiveBtn) {
+        const id = archiveBtn.dataset.id;
+        bootstrap.Modal.getInstance(document.getElementById('mm-detail-modal'))?.hide();
+        archiveMemory(id);
+        return;
+    }
+    const deleteBtn = e.target.closest('.mm-delete-from-detail');
+    if (deleteBtn) {
+        const id = deleteBtn.dataset.id;
+        bootstrap.Modal.getInstance(document.getElementById('mm-detail-modal'))?.hide();
+        deleteMemory(id);
+        return;
+    }
+});
+
+// --- 激活记忆管理面板时刷新 ---
+document.addEventListener('shown.bs.tab', function(e) {
+    const target = e.target?.getAttribute?.('data-bs-target');
+    if (target === '#knowledge-panel') {
+        state.mm.page = 1;
+        state.mm.searchQuery = '';
+        state.mm.statusFilter = 'active';
+        document.getElementById('mm-search-query').value = '';
+        loadMemoryManagement().catch(() => {});
+    }
+});
+
+// ====== F6: 手工提炼面板 ======
+const mmExtractState = {
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 20,
+};
+
+async function loadExtractionConversations(page) {
+    if (page !== undefined) mmExtractState.page = page;
+    const container = document.getElementById('mm-extract-conv-list');
+    const info = document.getElementById('mm-extract-info');
+    try {
+        const params = new URLSearchParams();
+        params.set('limit', mmExtractState.pageSize);
+        params.set('offset', (mmExtractState.page - 1) * mmExtractState.pageSize);
+        const data = await apiClient.request(`/api/conversations?${params}`);
+        mmExtractState.total = data.total || 0;
+        mmExtractState.items = data.conversations || [];
+        if (info) info.textContent = `选择对话记录进行手工提炼（共 ${mmExtractState.total} 条）`;
+
+        if (!data.conversations || data.conversations.length === 0) {
+            container.innerHTML = '<div class="text-center text-secondary small py-4">暂无对话记录。</div>';
+            renderMMExtractPagination();
+            return;
+        }
+
+        container.innerHTML = data.conversations.map(c => {
+            const t = formatTime(c.timestamp);
+            const id = c.id || '';
+            const isInput = c.type === 'user_input';
+            const label = isInput ? '用户' : '助手';
+            const bgClass = isInput ? 'bg-primary' : 'bg-success';
+            const typeBadge = isInput
+                ? '<span class="badge bg-primary bg-opacity-10 text-primary me-1">输入</span>'
+                : '<span class="badge bg-success bg-opacity-10 text-success me-1">输出</span>';
+            const rid = c.round_id ? c.round_id.slice(0, 16) : '';
+            return `<div class="border rounded p-2 mb-1 d-flex justify-content-between align-items-start">
+                <div class="d-flex align-items-start gap-2 flex-grow-1 me-2">
+                    <input type="checkbox" class="form-check-input mm-extract-checkbox mt-1" value="${escapeHtml(id)}">
+                    <div>
+                        <div class="small text-secondary mb-1">${typeBadge}<span class="me-2">${escapeHtml(t)}</span><code class="small text-muted">${escapeHtml(rid)}</code></div>
+                        <div class="mb-0"><span class="badge ${bgClass} bg-opacity-10 me-1">${label}</span>${escapeHtml(c.content)}</div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+        updateMMExtractButtons();
+        renderMMExtractPagination();
+    } catch (e) {
+        container.innerHTML = `<div class="text-danger small py-2">加载失败: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderMMExtractPagination() {
+    const nav = document.getElementById('mm-extract-pagination-nav');
+    if (!nav) return;
+    const totalPages = Math.ceil(mmExtractState.total / mmExtractState.pageSize) || 1;
+    if (mmExtractState.total === 0) { nav.innerHTML = ''; return; }
+    let html = `<span class="small text-secondary me-1">${mmExtractState.page}/${totalPages}</span>`;
+    html += `<button class="btn btn-sm btn-outline-secondary py-0" onclick="goMMExtractPage(${mmExtractState.page - 1})" ${mmExtractState.page <= 1 ? 'disabled' : ''}><i class="bi bi-chevron-left"></i></button>`;
+    const start = Math.max(1, mmExtractState.page - 2);
+    const end = Math.min(totalPages, mmExtractState.page + 2);
+    for (let p = start; p <= end; p++) {
+        html += `<button class="btn btn-sm ${p === mmExtractState.page ? 'btn-primary' : 'btn-outline-secondary'} py-0 ms-1" onclick="goMMExtractPage(${p})">${p}</button>`;
+    }
+    html += `<button class="btn btn-sm btn-outline-secondary py-0 ms-1" onclick="goMMExtractPage(${mmExtractState.page + 1})" ${mmExtractState.page >= totalPages ? 'disabled' : ''}><i class="bi bi-chevron-right"></i></button>`;
+    nav.innerHTML = html;
+}
+
+async function goMMExtractPage(page) {
+    if (page < 1) return;
+    mmExtractState.page = page;
+    try {
+        await loadExtractionConversations();
+    } catch (e) {
+        toast('加载失败: ' + e.message, 'danger');
+    }
+}
+
+function updateMMExtractButtons() {
+    const checked = document.querySelectorAll('.mm-extract-checkbox:checked').length;
+    const deleteBtn = document.getElementById('mm-extract-batch-delete-btn');
+    const exportBtn = document.getElementById('mm-extract-export-btn');
+    const extractBtn = document.getElementById('mm-extract-memory-btn');
+    document.getElementById('mm-extract-batch-delete-count').textContent = checked;
+    document.getElementById('mm-extract-export-count').textContent = checked;
+    document.getElementById('mm-extract-memory-count').textContent = checked;
+    deleteBtn.classList.toggle('d-none', checked === 0);
+    exportBtn.classList.toggle('d-none', checked === 0);
+    extractBtn.classList.toggle('d-none', checked === 0);
+}
+
+// --- 提炼按钮事件 ---
+document.getElementById('mm-extract-memory-btn')?.addEventListener('click', async function() {
+    const checked = document.querySelectorAll('.mm-extract-checkbox:checked');
+    if (checked.length === 0) { toast('请先选择要提炼的对话', 'warning'); return; }
+    const isLLMOnline = await checkLLMStatus();
+    if (!isLLMOnline) {
+        toast('LLM 服务当前离线，无法提炼知识。', 'warning');
+        return;
+    }
+    _extractConvIds = Array.from(checked).map(cb => cb.value);
+    showExtractLoading('正在提炼知识卡片...');
+    try {
+        await Promise.all([loadPromptTemplates(), loadLLMEndpointsForExtract()]);
+        cascadePromptByEndpoint();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 600000);
+        const promptSel = document.getElementById('extract-prompt-select');
+        const promptId = promptSel?.value || 'default';
+        const promptVersion = promptSel?.selectedOptions[0]?.dataset?.version || null;
+        const endpointName = document.getElementById('extract-endpoint-select').value || '';
+        const extractBody = {ids: _extractConvIds, prompt_id: promptId};
+        if (promptVersion) extractBody.prompt_version = promptVersion;
+        if (endpointName) extractBody.llm_endpoint = endpointName;
+        const data = await apiClient.request('/api/conversations/extract-v2', {
+            method: 'POST',
+            signal: controller.signal,
+            body: JSON.stringify(extractBody),
+        });
+        clearTimeout(timeoutId);
+        _extractCards = data.cards || [];
+        _extractPromptInfo = { prompt_id: data.prompt_id, prompt_version: data.prompt_version };
+        renderExtractReview(_extractCards, _extractPromptInfo);
+        if (!_extractCards.length) {
+            toast(data.message || '未提取到知识卡片', 'warning');
+        } else {
+            toast(data.message, 'success');
+        }
+        getReviewModal().show();
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            toast('提炼超时，请稍后重试', 'warning');
+        } else {
+            toast('提炼失败: ' + e.message, 'danger');
+        }
+    } finally {
+        hideExtractLoading();
+    }
+});
+
+// --- 导出选中 ---
+document.getElementById('mm-extract-export-btn')?.addEventListener('click', async function() {
+    const checked = document.querySelectorAll('.mm-extract-checkbox:checked');
+    if (checked.length === 0) { toast('请先选择要导出的对话', 'warning'); return; }
+    const ids = new Set(Array.from(checked).map(cb => cb.value));
+    try {
+        const params = new URLSearchParams();
+        params.append('type', 'user_input');
+        params.append('type', 'assistant_output');
+        if (window.state?.currentProject) params.append('project_id', window.state.currentProject);
+        const resp = await fetch('/api/memories/export?' + params.toString());
+        if (!resp.ok) throw new Error(`导出失败 (HTTP ${resp.status})`);
+        const text = await resp.text();
+        const allLines = text.trim().split('\n').filter(l => l);
+        const selectedLines = allLines.filter(line => {
+            try { const obj = JSON.parse(line); return ids.has(obj.id); } catch { return false; }
+        });
+        const blob = new Blob([selectedLines.join('\n') + '\n'], {type: 'application/x-ndjson'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `memos-conversations-export-${new Date().toISOString().slice(0,10)}.jsonl`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast(`已导出 ${selectedLines.length} 条对话记录`);
+    } catch (e) {
+        toast('导出失败: ' + e.message, 'danger');
+    }
+});
+
+// --- 批量删除 ---
+document.getElementById('mm-extract-batch-delete-btn')?.addEventListener('click', async function() {
+    const checked = document.querySelectorAll('.mm-extract-checkbox:checked');
+    if (checked.length === 0) { toast('请先选择要删除的对话', 'warning'); return; }
+    if (!confirm(`确定要删除选中的 ${checked.length} 条对话记录吗？此操作不可撤销。`)) return;
+    const ids = Array.from(checked).map(cb => cb.value);
+    try {
+        await apiClient.request('/api/memories/batch-delete', {
+            method: 'POST',
+            body: JSON.stringify({ids}),
+        });
+        toast(`已删除 ${ids.length} 条对话记录`);
+        await loadExtractionConversations();
+        updateMMExtractButtons();
+    } catch (e) {
+        toast('批量删除失败: ' + e.message, 'danger');
+    }
+});
+
+// 监听 checkbox 变化
+document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('mm-extract-checkbox')) {
+        updateMMExtractButtons();
+    }
+});
+
+// 激活手工提炼面板时加载
+document.addEventListener('shown.bs.tab', function(e) {
+    const target = e.target?.getAttribute?.('data-bs-target');
+    if (target === '#manual-extraction-panel') {
+        mmExtractState.page = 1;
+        loadExtractionConversations().catch(() => {});
+    }
+});
+
 // --- 对话记录 ---
 async function loadConversations(page) {
     if (page !== undefined) state.conv.page = page;
     const container = document.getElementById('conversation-list');
     const info = document.getElementById('conv-info');
+    // 不在对话面板时静默跳过
+    if (!container || !info) return;
     try {
         const params = new URLSearchParams();
         params.set('limit', state.conv.pageSize);
@@ -987,6 +1787,8 @@ document.getElementById('project-selector')?.addEventListener('change', function
     }
     state.kb.page = 1;
     state.conv.page = 1;
+    state.mm.page = 1;
+    state.mm.searchQuery = '';
     // 清空今日回顾旧数据
     state.dr.report = null;
     state.dr.reportDate = null;
@@ -1000,39 +1802,28 @@ document.getElementById('project-selector')?.addEventListener('change', function
     Promise.all([
         loadMemories(),
         loadConversations(),
+        loadMemoryManagement(),
     ]).catch(e => toast('加载失败: ' + e.message, 'danger'));
-    // 刷新建议面板（通过 window 接口，因 suggestions.js 在 IIFE 内）
-    setTimeout(function() {
-        if (typeof window.refreshSuggestionPanel === 'function') window.refreshSuggestionPanel();
-    }, 100);
     // 刷新待办面板（loadTodos 是全局函数）
     setTimeout(function() {
         if (typeof loadTodos === 'function') loadTodos();
     }, 200);
+    // 刷新总览子面板：项目简报
+    state.brf.statsCache = null;
+    setTimeout(function() { loadBriefingPanel(); }, 150);
+    // 刷新总览子面板：任务看板
+    setTimeout(function() { loadTaskProgress(); loadTaskSequence(); }, 150);
+    // 刷新今日回顾过滤器（端点列表按项目重新加载）
+    setTimeout(function() { if (typeof loadDRFilters === 'function') loadDRFilters(); }, 150);
     // 刷新统计图表
     setTimeout(loadUsageStats, 300);
     setTimeout(loadConflictCount, 600);
+    // 刷新对话组子面板：事件看板 + 监控面板
+    setTimeout(function() { loadMemoryStream(); }, 150);
+    setTimeout(function() { loadMonitorPanel(); }, 150);
 });
 
 // --- 系统状态 ---
-async function loadStatus() {
-    try {
-        const data = await api('/api/status');
-        const dot = document.getElementById('status-dot');
-        const text = document.getElementById('status-text');
-        const epName = data.active_endpoint || 'LLM';
-        if (data.llama_server_ok) {
-            dot.className = 'status-dot online';
-            text.textContent = `${epName} 服务在线`;
-        } else {
-            dot.className = 'status-dot offline';
-            text.textContent = `${epName} 服务离线`;
-        }
-    } catch (e) {
-        document.getElementById('status-dot').className = 'status-dot offline';
-        document.getElementById('status-text').textContent = '状态异常';
-    }
-}
 
 async function checkLLMStatus() {
     try {
@@ -1043,12 +1834,51 @@ async function checkLLMStatus() {
     }
 }
 
+// 顶栏状态指示灯
+async function loadTopBarStatus() {
+    var sysEl = document.getElementById('sys-status-indicator');
+    var llmEl = document.getElementById('llm-status-indicator');
+    if (!sysEl && !llmEl) return;
+    try {
+        var [health, llm] = await Promise.all([
+            api('/api/health').catch(function() { return null; }),
+            api('/api/v2/llm/ping').catch(function() { return null; }),
+        ]);
+
+        // 系统运行状态
+        if (sysEl) {
+            var icon = sysEl.querySelector('i');
+            if (health && health.status === 'ok') {
+                icon.className = 'bi bi-cpu text-success';
+                sysEl.title = '系统 (' + (health.version || '-') + ') 运行正常';
+            } else {
+                icon.className = 'bi bi-cpu text-danger';
+                sysEl.title = '系统异常';
+            }
+        }
+
+        // LLM 服务状态
+        if (llmEl) {
+            var icon = llmEl.querySelector('i');
+            if (llm && llm.llama_server_ok) {
+                icon.className = 'bi bi-robot text-success';
+                llmEl.title = (llm.active_endpoint || 'LLM') + ' 服务在线';
+            } else {
+                icon.className = 'bi bi-robot text-danger';
+                llmEl.title = 'LLM 服务离线';
+            }
+        }
+    } catch (e) {
+        // 失败保持灰色
+    }
+}
+
 // --- 备份 ---
 async function triggerBackup() {
     const btn = document.getElementById('backup-btn');
     const statusText = document.getElementById('backup-status-text');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>备份中...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>';
     statusText.style.display = 'none';
     try {
         const resp = await fetch('/api/backup/trigger', {method: 'POST'});
@@ -1061,7 +1891,7 @@ async function triggerBackup() {
     } catch (e) {
         toast('备份失败: ' + e.message, 'danger');
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-cloud-arrow-up"></i> 备份';
+        btn.innerHTML = '<i class="bi bi-cloud-arrow-up"></i>';
     }
 }
 
@@ -1094,7 +1924,7 @@ async function pollBackupProgress(btn, statusText) {
         }
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-cloud-arrow-up"></i> 备份';
+    btn.innerHTML = '<i class="bi bi-cloud-arrow-up"></i>';
     if (waited >= maxWait * 1000) {
         toast('备份超时，请检查服务器日志', 'warning');
     }
@@ -1102,6 +1932,7 @@ async function pollBackupProgress(btn, statusText) {
 
 async function loadBackupStatus() {
     const statusText = document.getElementById('backup-status-text');
+    if (!statusText) return;
     try {
         const data = await api('/api/backup/status');
         if (data.latest) {
@@ -1110,7 +1941,7 @@ async function loadBackupStatus() {
             const sizeMb = (data.latest.size_bytes / (1024*1024)).toFixed(1);
             let icon = data.health === 'warning' || data.health === 'partial' ? '⚠' : '✓';
             statusText.style.display = '';
-            statusText.innerHTML = `${icon} 上次备份: ${timeStr} (${sizeMb}MB)`;
+            statusText.innerHTML = `${icon} 上次备份: ${timeStr}`;
             if (data.days_since_backup && data.days_since_backup > data.remind_after_days) {
                 statusText.className = 'small text-warning';
             } else {
@@ -1599,7 +2430,6 @@ async function activateLLMEndpoint(btn, name) {
             body: JSON.stringify({name}),
         });
         toast(data.message || `已切换到端点 '${name}'`, data.status === 'online' ? 'success' : 'warning');
-        loadStatus(); // 立即刷新状态指示灯
         await Promise.all([loadSettings(), loadLLMEndpointsForExtract()]);
     } catch (e) {
         btn.disabled = false;
@@ -2055,7 +2885,7 @@ function toggleExtractCard(idx) {
 function copyExtractCard(idx) {
     const card = _extractCards[idx];
     if (!card) return;
-    const text = `【${card.type || 'tech_knowledge'}】\n问题：${card.problem || ''}\n方案：${card.solution || ''}\n洞察：${card.insight || ''}`;
+    const text = `【${card.type || 'solution'}】\n问题：${card.problem || ''}\n方案：${card.solution || ''}\n洞察：${card.insight || ''}`;
     copyToClipboard(text, '知识卡片');
 }
 
@@ -2063,7 +2893,7 @@ function editExtractCard(idx) {
     const card = _extractCards[idx];
     if (!card) return;
     document.getElementById('extract-edit-index').value = idx;
-    document.getElementById('extract-edit-type').value = card.type || 'tech_knowledge';
+    document.getElementById('extract-edit-type').value = card.type || 'solution';
     document.getElementById('extract-edit-problem').value = card.problem || '';
     document.getElementById('extract-edit-solution').value = card.solution || '';
     document.getElementById('extract-edit-insight').value = card.insight || '';
@@ -2339,9 +3169,8 @@ document.getElementById('knowledge-tab')?.addEventListener('shown.bs.tab', funct
 });
 
 async function init() {
-    await Promise.all([loadProjects(), loadStatus(), loadBackupStatus()]);
+    await Promise.all([loadProjects(), loadBackupStatus()]);
     await Promise.all([loadMemories(), loadConversations()]);
-    setInterval(loadStatus, 15000);
 
     // 首次访问弹出设置向导
     if (!isWizardCompleted()) {
@@ -2383,6 +3212,20 @@ async function init() {
             modal.show();
         }, 500);
     }
+
+    // v0.7.1: 应用 URL hash 定位二级面板
+    applyHash();
+
+    // v0.7.1: P10 — 首次加载时直接激活默认面板
+    var firstSub = document.querySelector('#group-overview .subpanel-pills .nav-link.active');
+    if (firstSub) {
+        // 直接派发 shown.bs.tab 事件确保面板数据加载
+        firstSub.dispatchEvent(new Event('shown.bs.tab', {bubbles: true}));
+    }
+
+    // 加载顶栏状态指示灯
+    loadTopBarStatus();
+    setInterval(loadTopBarStatus, 60000);
 }
 
 // ====== 设置向导 ======
@@ -2621,7 +3464,7 @@ function checkEndpointTypeAvailable() {
     const oldFormatId = ep + '-' + tp;
     const exists = _promptTemplates.some(t => !t.is_virtual && (t.id === templateId || t.id === oldFormatId));
     if (exists) {
-        const typeNames = {extract:'提炼知识', 'daily-review':'今日回顾'};
+        const typeNames = {extract:'提炼知识', 'daily-review':'今日回顾', briefing:'简报生成'};
         warn.textContent = `端点 "${ep}" 的"${typeNames[tp]||tp}"模板已存在，不可重复创建`;
         warn.style.display = '';
         btn.disabled = true;
@@ -3278,6 +4121,18 @@ function _escapeHtml(text) {
         + String(now.getDate()).padStart(2, '0');
     var el = document.getElementById('dr-date');
     if (el) el.value = today;
+    var brfEl = document.getElementById('brf-date');
+    if (brfEl) {
+        brfEl.value = today;
+        // 注意：时间选择器只控制历史简报列表 + 立即生成，不影响当前简报区域
+    }
+    var taskDateEl = document.getElementById('task-sequence-date');
+    if (taskDateEl) {
+        taskDateEl.value = today;
+        taskDateEl.addEventListener('change', function() {
+            loadTaskSequence(this.value);
+        });
+    }
 })();
 
 // 填充端点选择器（项目选择统一使用顶部工具栏）
@@ -3465,6 +4320,8 @@ setInterval(loadConflictCount, 30000);  // 每30秒轮询
 // ==== v0.4.1 用量统计 ====
 async function loadUsageStats() {
     try {
+        // 不在总览面板时跳过
+        if (!document.getElementById('stat-today')) return;
         var today = await apiClient.request('/api/stats/usage?period=today');
         var week = await apiClient.request('/api/stats/usage?period=week');
         var fmtLink = function(label, src, days) {
@@ -3642,6 +4499,14 @@ function cascadeDailyReviewPrompt() {
     });
 }
 
+// 将日期字符串（YYYY-MM-DD）转为本地时区的 UTC 时间戳范围
+function dateToTsRange(dateStr) {
+    return {
+        start_ts: new Date(dateStr + 'T00:00:00').getTime() / 1000,
+        end_ts: new Date(dateStr + 'T23:59:59').getTime() / 1000,
+    };
+}
+
 // 生成日报
 document.getElementById('dr-generate-btn')?.addEventListener('click', async function() {
     var date = document.getElementById('dr-date').value;
@@ -3679,7 +4544,8 @@ document.getElementById('dr-generate-btn')?.addEventListener('click', async func
         var promptId = promptSel.value || '';
         var promptVersion = promptSel.selectedOptions[0]?.dataset?.version || null;
 
-        var body = { date: date, project_id: window.state?.currentProject || null };
+        var tsRange = dateToTsRange(date);
+        var body = { date: date, start_ts: tsRange.start_ts, end_ts: tsRange.end_ts, project_id: window.state?.currentProject || null };
         if (endpointName) body.llm_endpoint = endpointName;
         if (promptId) body.prompt_id = promptId;
         if (promptVersion) body.prompt_version = promptVersion;
@@ -3801,7 +4667,8 @@ document.getElementById('dr-preview-btn')?.addEventListener('click', async funct
         var promptSel = document.getElementById('dr-prompt-select');
         var promptId = promptSel.value || '';
         var promptVersion = promptSel.selectedOptions[0]?.dataset?.version || null;
-        var body = { date: date, project_id: window.state?.currentProject || null };
+        var tsRange = dateToTsRange(date);
+        var body = { date: date, start_ts: tsRange.start_ts, end_ts: tsRange.end_ts, project_id: window.state?.currentProject || null };
         if (endpointName) body.llm_endpoint = endpointName;
         if (promptId) body.prompt_id = promptId;
         if (promptVersion) body.prompt_version = promptVersion;
@@ -3969,4 +4836,2175 @@ document.getElementById('pm-del-execute')?.addEventListener('click', async funct
     }
 });
 
+// ====== F2b: 新面板 JS 处理 ======
+
+// === 1. Watchlist (跟进组 → 待关注) ===
+// GET /api/v2/watchlist?page=1&page_size=20
+// POST /api/v2/watchlist/{id}/to-knowledge → 转为知识
+// POST /api/v2/watchlist/{id}/ignore → 忽略
+// POST /api/v2/watchlist/{id}/note → 备注
+
+async function loadWatchlist() {
+    var container = document.getElementById('watchlist-container');
+    if (!container) return;
+    container.innerHTML = renderSkeleton('list');
+    try {
+        var data = await apiClient.request('/api/v2/watchlist?page=1&page_size=20');
+        var items = data.items || [];
+        if (!items.length) {
+            container.innerHTML = '<div class="empty-state">' +
+                '<i class="bi bi-eye"></i>' +
+                '<p>暂无待关注内容</p>' +
+                '<p class="hint">使用 remember() 标记待关注的信息会出现在这里</p>' +
+                '</div>';
+            return;
+        }
+        var html = '';
+        items.forEach(function(item) {
+            var meta = item.metadata || {};
+            var ts = meta.timestamp || 0;
+            html += '<div class="card mb-2">';
+            html += '<div class="card-body py-2 px-3">';
+            html += '<div class="small text-secondary mb-1">' + timeAgo(ts) + '</div>';
+            html += '<div class="mb-2">' + escapeHtml(item.document) + '</div>';
+            html += '<div class="d-flex gap-1">';
+            html += '<button class="btn btn-sm btn-outline-success py-0 px-1" onclick="watchlistToKnowledge(\'' + item.id + '\')">转为知识</button>';
+            html += '<button class="btn btn-sm btn-outline-warning py-0 px-1" onclick="watchlistIgnore(\'' + item.id + '\')">忽略</button>';
+            html += '<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="watchlistNote(\'' + item.id + '\')">备注</button>';
+            html += '</div></div></div>';
+        });
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger small text-center py-3">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+async function watchlistToKnowledge(id) {
+    var type = prompt('选择目标知识类型: solution/decision/lesson/process', 'solution');
+    if (!type) return;
+    type = type.trim().toLowerCase();
+    if (['solution', 'decision', 'lesson', 'process'].indexOf(type) === -1) {
+        toast('无效类型，可选: solution/decision/lesson/process', 'warning');
+        return;
+    }
+    try {
+        await apiClient.request('/api/v2/watchlist/' + id + '/to-knowledge', {
+            method: 'POST',
+            body: JSON.stringify({type: type}),
+        });
+        toast('已转为知识', 'success');
+        loadWatchlist();
+    } catch (e) {
+        toast('转换失败: ' + e.message, 'danger');
+    }
+}
+
+async function watchlistIgnore(id) {
+    try {
+        await apiClient.request('/api/v2/watchlist/' + id + '/ignore', {method: 'POST'});
+        toast('已忽略', 'success');
+        loadWatchlist();
+    } catch (e) {
+        toast('忽略失败: ' + e.message, 'danger');
+    }
+}
+
+async function watchlistNote(id) {
+    var note = prompt('输入备注:');
+    if (note === null) return;
+    try {
+        await apiClient.request('/api/v2/watchlist/' + id + '/note', {
+            method: 'POST',
+            body: JSON.stringify({note: note}),
+        });
+        toast('备注已保存', 'success');
+        loadWatchlist();
+    } catch (e) {
+        toast('保存备注失败: ' + e.message, 'danger');
+    }
+}
+
+// === 2. 事件看板（活动日志时间线） ===
+// GET /api/v2/activity-log?page=1&page_size=30
+// 差异化展示每种事件类型的独有字段
+
+var _EVENT_LABELS = {
+    recall:            {icon: 'bi-search',      label: '语义检索'},
+    knowledge_write:   {icon: 'bi-pencil',      label: '知识写入'},
+    context_injection: {icon: 'bi-send',        label: '上下文注入'},
+    manual_injection:  {icon: 'bi-hand-index',  label: '手工注入'},
+    ai_reference:      {icon: 'bi-robot',       label: 'AI 引用'},
+};
+var _EVENT_COLORS = {
+    recall:            'info',
+    knowledge_write:   'success',
+    context_injection: 'warning',
+    manual_injection:  'primary',
+    ai_reference:      'secondary',
+};
+
+/** 渲染单条事件卡片 */
+function renderEventCard(item) {
+    var ev = item.event || 'unknown';
+    var info = _EVENT_LABELS[ev] || {icon: 'bi-question-circle', label: ev};
+    var color = _EVENT_COLORS[ev] || 'secondary';
+    var ts = item.timestamp ? '<span class="small text-secondary">' + timeAgo(item.timestamp) + '</span>' : '';
+
+    var detailHtml = '';
+
+    switch (ev) {
+        case 'recall':
+            // 字段: query, result_count, match_types
+            detailHtml += '<div class="d-flex align-items-center gap-2 mt-1">';
+            detailHtml += '<span class="small text-break flex-grow-1"><strong>查询：</strong>' + escapeHtml(item.query || '') + '</span>';
+            detailHtml += '<span class="badge bg-info bg-opacity-10 text-info flex-shrink-0">' + (item.result_count || 0) + ' 条命中</span>';
+            detailHtml += '</div>';
+            if (item.match_types && item.match_types.length) {
+                detailHtml += '<div class="small text-secondary mt-1">匹配类型：' + escapeHtml(item.match_types.join(', ')) + '</div>';
+            }
+            break;
+
+        case 'knowledge_write':
+            // 字段: type, summary, source
+            var typeLabel = item.type || 'unknown';
+            detailHtml += '<div class="d-flex align-items-center gap-2 mt-1">';
+            detailHtml += '<span class="badge bg-success bg-opacity-10 text-success flex-shrink-0">' + escapeHtml(typeLabel) + '</span>';
+            detailHtml += '<span class="small text-secondary flex-shrink-0">来源：' + escapeHtml(item.source || '') + '</span>';
+            detailHtml += '</div>';
+            if (item.summary) {
+                detailHtml += '<div class="small text-break mt-1" style="border-left:2px solid var(--bs-gray-600,#6c757d);padding-left:8px">' + escapeHtml(item.summary) + '</div>';
+            }
+            break;
+
+        case 'context_injection':
+            // 字段: memory_ids, types, injection_type
+            var injType = item.injection_type || 'knowledge';
+            var injLabel = injType === 'manual' ? '用户建议' : '知识注入';
+            var count = (item.memory_ids && item.memory_ids.length) || 0;
+            detailHtml += '<div class="d-flex align-items-center gap-2 mt-1">';
+            detailHtml += '<span class="badge bg-warning bg-opacity-10 text-warning flex-shrink-0">' + injLabel + '</span>';
+            detailHtml += '<span class="small text-secondary">' + count + ' 条记忆</span>';
+            detailHtml += '</div>';
+            if (item.types && item.types.length) {
+                detailHtml += '<div class="small text-secondary mt-1">类型：' + escapeHtml(item.types.join(', ')) + '</div>';
+            }
+            break;
+
+        case 'manual_injection':
+            // 字段: count, summary
+            detailHtml += '<div class="d-flex align-items-center gap-2 mt-1">';
+            detailHtml += '<span class="small"><strong>' + (item.count || 0) + ' 条</strong> 用户建议已注入</span>';
+            detailHtml += '</div>';
+            if (item.summary) {
+                detailHtml += '<div class="small text-secondary mt-1">' + escapeHtml(item.summary) + '</div>';
+            }
+            break;
+
+        case 'ai_reference':
+            // 字段: memory_id, content_snippet, referenced
+            var refStatus = item.referenced ? '已引用' : '未匹配';
+            var refColor = item.referenced ? 'success' : 'secondary';
+            detailHtml += '<div class="d-flex align-items-center gap-2 mt-1">';
+            detailHtml += '<span class="badge bg-' + refColor + ' bg-opacity-10 text-' + refColor + ' flex-shrink-0">' + refStatus + '</span>';
+            detailHtml += '<span class="small text-secondary text-truncate" title="' + escapeHtml(item.memory_id || '') + '">ID: ' + escapeHtml((item.memory_id || '').slice(0, 20)) + '</span>';
+            detailHtml += '</div>';
+            if (item.content_snippet) {
+                detailHtml += '<div class="small text-break mt-1">' + escapeHtml(item.content_snippet) + '</div>';
+            }
+            break;
+
+        default:
+            // 未知事件类型 — 兜底显示全部字段
+            var fallback = item.query || item.type || item.event || item.summary || '';
+            detailHtml += '<div class="small mt-1">' + escapeHtml(fallback) + '</div>';
+            break;
+    }
+
+    return '<div class="d-flex align-items-start gap-2 mb-2 p-2 border rounded">' +
+        '<i class="bi ' + info.icon + ' text-' + color + '" style="font-size:1.1rem;margin-top:2px"></i>' +
+        '<div class="flex-grow-1 min-w-0">' +
+        '<div class="d-flex justify-content-between align-items-center">' +
+        '<span class="badge bg-' + color + ' bg-opacity-10 text-' + color + ' flex-shrink-0">' + escapeHtml(info.label) + '</span>' +
+        ts +
+        '</div>' +
+        detailHtml +
+        '</div></div>';
+}
+
+async function loadMemoryStream() {
+    var container = document.getElementById('memory-stream-container');
+    if (!container) return;
+    container.innerHTML = renderSkeleton('list');
+    try {
+        var data = await apiClient.request('/api/v2/activity-log?page=1&page_size=30');
+        var items = data.items || [];
+        if (!items.length) {
+            container.innerHTML = '<div class="empty-state">' +
+                '<i class="bi bi-water"></i>' +
+                '<p>暂无事件记录</p>' +
+                '<p class="hint">当有记忆写入、检索或注入时会显示在这里</p>' +
+                '</div>';
+            return;
+        }
+        container.innerHTML = items.map(renderEventCard).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger small text-center py-3">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+// === 3. Task Progress (总览组 → Task 进度) ===
+// GET /api/v2/tasks
+
+/* 解析 task document（可能为 TASK_EVAL JSON 结构体） */
+function parseTaskEval(task) {
+    var doc = (task && task.document) || '';
+    if (!doc) return { goal: '(无描述)', done: [], todo: [], blocked: [] };
+    try {
+        var obj = typeof doc === 'string' ? JSON.parse(doc) : doc;
+        /* done/todo/blocked 可能嵌套在 obj.progress 里，也可能在顶层 */
+        var progress = obj.progress || obj;
+        return {
+            goal: obj.goal || obj.title || obj.summary || doc,
+            done: progress.done || obj.done || [],
+            todo: progress.todo || obj.todo || [],
+            blocked: progress.blocked || obj.blocked || [],
+        };
+    } catch (e) {
+        return { goal: doc, done: [], todo: [], blocked: [] };
+    }
+}
+
+/* 渲染单条 task 卡片 */
+function renderTaskCard(task, isActive) {
+    var meta = task.metadata || {};
+    var ts = meta.updated_at || meta.timestamp || 0;
+    var parsed = parseTaskEval(task);
+    var goal = parsed.goal;
+    var taskId = task.id || '';
+
+    if (isActive) {
+        // 活跃 task — 大卡片，含进度摘要 + 操作按钮
+        var html = '<div class="card border-success border-opacity-25 mb-3" data-task-id="' + escapeHtml(taskId) + '">';
+        html += '<div class="card-header py-2 px-3 d-flex justify-content-between align-items-center bg-success bg-opacity-10">';
+        html += '<span><span class="badge bg-success me-2">进行中</span><strong>' + escapeHtml(goal) + '</strong></span>';
+        html += '<span class="small text-secondary">' + (ts ? timeAgo(ts) : '') + '</span>';
+        html += '</div>';
+
+        // G2: 进度详情（done/todo/blocked 列表）
+        var hasProgress = parsed.done.length > 0 || parsed.todo.length > 0 || parsed.blocked.length > 0;
+        if (hasProgress || meta.context) {
+            html += '<div class="card-body py-2 px-3">';
+            // 进度详情
+            if (hasProgress) {
+                if (parsed.done.length > 0) {
+                    html += '<div class="small mb-1"><span class="text-success fw-semibold">✅ 已完成</span></div>';
+                    html += '<ul class="list-unstyled small mb-2" style="padding-left:1.2rem;">';
+                    parsed.done.forEach(function(item) {
+                        html += '<li class="text-success mb-1" style="list-style:none;">' + escapeHtml(item) + '</li>';
+                    });
+                    html += '</ul>';
+                }
+                if (parsed.todo.length > 0) {
+                    html += '<div class="small mb-1"><span class="text-warning fw-semibold">📋 待做</span></div>';
+                    html += '<ul class="list-unstyled small mb-2" style="padding-left:1.2rem;">';
+                    parsed.todo.forEach(function(item) {
+                        html += '<li class="text-warning-emphasis mb-1" style="list-style:none;">☐ ' + escapeHtml(item) + '</li>';
+                    });
+                    html += '</ul>';
+                }
+                if (parsed.blocked.length > 0) {
+                    html += '<div class="small mb-1"><span class="text-danger fw-semibold">🚫 阻塞</span></div>';
+                    html += '<ul class="list-unstyled small mb-2" style="padding-left:1.2rem;">';
+                    parsed.blocked.forEach(function(item) {
+                        html += '<li class="text-danger mb-1" style="list-style:none;">✗ ' + escapeHtml(item) + '</li>';
+                    });
+                    html += '</ul>';
+                }
+            }
+            // 上下文
+            if (meta.context) {
+                if (hasProgress) html += '<hr class="my-1 border-secondary">';
+                html += '<div class="small text-secondary" style="border-left:2px solid var(--bs-gray-600,#6c757d);padding-left:8px">' + escapeHtml(meta.context) + '</div>';
+            }
+            html += '</div>';
+        }
+
+        // G3: 操作按钮 — 主次区分布局
+        html += '<div class="card-footer py-1 px-3 bg-transparent">';
+        html += '<div class="d-flex justify-content-between align-items-center">';
+        // 主操作区（左）：实心按钮 + 文字标签
+        html += '<div class="d-flex gap-1">';
+        html += '<button class="btn btn-sm btn-success py-0 px-2" onclick="completeTask(\'' + escapeHtml(taskId) + '\')">';
+        html += '<i class="bi bi-check-lg"></i> 完成</button>';
+        html += '<button class="btn btn-sm btn-outline-warning py-0 px-2" onclick="pauseTask(\'' + escapeHtml(taskId) + '\')">';
+        html += '<i class="bi bi-pause-fill"></i> 暂停</button>';
+        html += '</div>';
+        // 次级操作区（右）：纯图标
+        html += '<div class="d-flex gap-1">';
+        html += '<button class="btn btn-sm btn-outline-info py-0 px-2" onclick="showMemoryDetail(\'' + escapeHtml(taskId) + '\')" title="详情/编辑">';
+        html += '<i class="bi bi-info-circle"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="archiveTask(\'' + escapeHtml(taskId) + '\')" title="归档">';
+        html += '<i class="bi bi-archive"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-danger py-0 px-2 ms-2" onclick="deleteTask(\'' + escapeHtml(taskId) + '\')" title="删除">';
+        html += '<i class="bi bi-trash"></i></button>';
+        html += '</div></div></div></div>';
+        return html;
+    }
+
+    // G1: 历史 task — 按状态区分紧凑行 + 操作按钮
+    var statusInfo = {
+        completed: {label: '已完成', color: 'success'},
+        paused: {label: '已暂停', color: 'warning'},
+        archived: {label: '已归档', color: 'secondary'},
+    };
+    var info = statusInfo[meta.status] || {label: meta.status || '未知', color: 'secondary'};
+    var label = meta.status === 'paused' ? '已暂停' : (meta.status === 'completed' ? '已完成' : '已归档');
+    var color = meta.status === 'paused' ? 'warning' : (meta.status === 'completed' ? 'success' : 'secondary');
+
+    var html = '<div class="d-flex justify-content-between align-items-center py-1 px-2 border-bottom border-secondary border-opacity-25">';
+    html += '<div><span class="badge bg-' + color + ' bg-opacity-10 text-' + color + ' me-2" style="min-width:3rem;">' + label + '</span>';
+    html += '<span class="small">' + escapeHtml(goal) + '</span></div>';
+    html += '<div class="d-flex gap-1 align-items-center">';
+    html += '<span class="small text-secondary me-2">' + (ts ? timeAgo(ts) : '') + '</span>';
+
+    if (meta.status === 'completed') {
+        html += '<button class="btn btn-sm btn-outline-primary py-0 px-1" onclick="resumeTask(\'' + escapeHtml(taskId) + '\')" title="重新打开"><i class="bi bi-arrow-counterclockwise"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteTask(\'' + escapeHtml(taskId) + '\')" title="删除"><i class="bi bi-trash"></i></button>';
+    } else if (meta.status === 'paused' || meta.paused) {
+        html += '<button class="btn btn-sm btn-outline-success py-0 px-1" onclick="resumeTask(\'' + escapeHtml(taskId) + '\')" title="恢复"><i class="bi bi-play-fill"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="archiveTask(\'' + escapeHtml(taskId) + '\')" title="归档"><i class="bi bi-archive"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteTask(\'' + escapeHtml(taskId) + '\')" title="删除"><i class="bi bi-trash"></i></button>';
+    } else {
+        // archived / forgotten / other
+        html += '<button class="btn btn-sm btn-outline-primary py-0 px-1" onclick="resumeTask(\'' + escapeHtml(taskId) + '\')" title="恢复"><i class="bi bi-arrow-counterclockwise"></i></button>';
+        html += '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteTask(\'' + escapeHtml(taskId) + '\')" title="删除"><i class="bi bi-trash"></i></button>';
+    }
+
+    html += '</div></div>';
+    return html;
+}
+
+async function loadTaskProgress() {
+    var container = document.getElementById('task-progress-container');
+    if (!container) return;
+    if (_taskLoading) return;
+    _taskLoading = true;
+    container.innerHTML = renderSkeleton('list');
+    try {
+        var data = await apiClient.request('/api/v2/tasks?limit=30');
+        var tasks = data.tasks || [];
+        var counts = data.counts || {};
+
+        if (tasks.length === 0) {
+            container.innerHTML = '<div class="empty-state">' +
+                '<i class="bi bi-list-task"></i>' +
+                '<p>暂无 task 记录</p>' +
+                '<p class="hint">Task 会在每次会话开始时自动创建</p>' +
+                '</div>';
+            _taskLoading = false;
+            return;
+        }
+
+        var html = '';
+
+        // 活跃 task
+        var activeTasks = tasks.filter(function(t) {
+            var m = t.metadata || {};
+            return m.status === 'active' && !m.paused;
+        });
+        if (activeTasks.length > 0) {
+            html += '<h6 class="mb-2"><span class="badge bg-success me-1">' + counts.active + '</span>活跃任务</h6>';
+            activeTasks.forEach(function(t) { html += renderTaskCard(t, true); });
+        }
+
+        // 已暂停/归档（默认折叠）
+        var pausedTasks = tasks.filter(function(t) {
+            var m = t.metadata || {};
+            return (m.status === 'paused' || m.paused || m.status === 'archived' || m.status === 'forgotten')
+                && m.status !== 'completed';
+        });
+        if (pausedTasks.length > 0) {
+            html += '<h6 class="mt-3 mb-2">';
+            html += '<a class="text-decoration-none text-secondary small" data-bs-toggle="collapse" href="#paused-task-list" role="button">';
+            html += '⏸️ 已暂停/归档 <span class="badge bg-secondary">' + counts.paused_archived + '</span>';
+            html += '</a></h6>';
+            html += '<div class="collapse" id="paused-task-list"><div class="card"><div class="card-body py-1 px-0">';
+            pausedTasks.forEach(function(t) { html += renderTaskCard(t, false); });
+            html += '</div></div></div>';
+        }
+
+        container.innerHTML = html;
+        // 加载任务模式指示器
+        loadTaskMode();
+        _taskLoading = false;
+    } catch (e) {
+        _taskLoading = false;
+        container.innerHTML = '<div class="text-danger small text-center py-3">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+// --- Task 管理操作 ---
+
+async function pauseTask(id) {
+    if (_taskLoading) return;
+    if (!confirm("暂停此 Task？")) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id + '/pause', {method: 'POST'});
+        toast('Task 已暂停', 'warning');
+        _taskLoading = false;
+        loadTaskProgress();
+        loadTaskSequence();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+/* resumeTask 同时承担 reopen 职责（completed→active） */
+async function resumeTask(id) {
+    if (_taskLoading) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id + '/resume', {method: 'POST'});
+        toast('Task 已恢复', 'success');
+        _taskLoading = false;
+        loadTaskProgress();
+        loadTaskSequence();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+async function completeTask(id) {
+    if (_taskLoading) return;
+    if (!confirm("标记此 Task 为已完成？")) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id + '/complete', {method: 'POST'});
+        toast('Task 已完成', 'success');
+        // 就地更新该行状态，避免整表重渲染闪烁
+        if (_taskSeqCache && _taskSeqCache[id]) {
+            _taskSeqCache[id].metadata = _taskSeqCache[id].metadata || {};
+            _taskSeqCache[id].metadata.status = 'completed';
+        }
+        var row = document.querySelector('[data-task-id="' + CSS.escape(id) + '"]');
+        if (row && _taskSeqCache && _taskSeqCache[id]) {
+            row.outerHTML = renderTaskRow(_taskSeqCache[id]);
+        }
+        _taskLoading = false;
+        loadTaskProgress();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+async function archiveTask(id) {
+    if (_taskLoading) return;
+    if (!confirm("归档此 Task？可在记忆管理中恢复。")) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id + '/archive', {method: 'POST'});
+        toast('Task 已归档', 'secondary');
+        _taskLoading = false;
+        loadTaskProgress();
+        loadTaskSequence();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+async function deleteTask(id) {
+    if (_taskLoading) return;
+    if (!confirm("确定永久删除此 Task？不可恢复！")) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id, {method: 'DELETE'});
+        toast('Task 已删除', 'danger');
+        _taskLoading = false;
+        loadTaskProgress();
+        loadTaskSequence();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+/* 内联编辑，直接调用 task 专用端点（修复 C1） */
+async function editTask(id) {
+    if (_taskLoading) return;
+    var newContent = prompt("编辑 Task 内容：");
+    if (!newContent) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id, {
+            method: 'PUT',
+            body: JSON.stringify({document: newContent})
+        });
+        toast('Task 已更新', 'success');
+        _taskLoading = false;
+        loadTaskProgress();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+// === v0.7.1: Task 序列（下区）功能 ===
+
+/* 解析 task document（可能为 TASK_EVAL JSON 结构体） */
+function parseTaskEval(task) {
+    var doc = task.document || '';
+    if (!doc) return { goal: '(无描述)', done: [], todo: [], blocked: [] };
+    try {
+        var obj = typeof doc === 'string' ? JSON.parse(doc) : doc;
+        var progress = obj.progress || obj;
+        return {
+            goal: obj.goal || obj.title || obj.summary || doc,
+            done: progress.done || obj.done || [],
+            todo: progress.todo || obj.todo || [],
+            blocked: progress.blocked || obj.blocked || [],
+        };
+    } catch (e) {
+        return { goal: doc || '(无描述)', done: [], todo: [], blocked: [] };
+    }
+}
+
+/* 加载 Task 序列（下区），支持日期筛选 */
+async function loadTaskSequence(date) {
+    // 不传 date 时从日期选择框读取
+    if (date === undefined) {
+        var dateInput = document.getElementById('task-sequence-date');
+        date = dateInput ? dateInput.value : '';
+    }
+    var container = document.getElementById('task-sequence-container');
+    if (!container) { return; }
+    container.style.display = '';
+    var list = document.getElementById('task-sequence-list');
+    if (!list) return;
+    list.innerHTML = renderSkeleton('list');
+    try {
+        var data = await apiClient.request('/api/v2/tasks?limit=50');
+        var tasks = data.tasks || [];
+        if (tasks.length === 0) {
+            list.innerHTML = '<div class="text-center text-secondary small py-3">暂无记录</div>';
+            return;
+        }
+        // 前端日期过滤（API 不支持 date 参数）
+        var filtered = tasks;
+        if (date) {
+            filtered = tasks.filter(function(t) {
+                var meta = t.metadata || {};
+                var ts = meta.updated_at || meta.timestamp || 0;
+                var taskDate = new Date(ts * 1000).toISOString().split('T')[0];
+                return taskDate === date;
+            });
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="text-center text-secondary small py-3">该日期无 task 记录</div>';
+                return;
+            }
+        }
+        // 写入缓存（供 toggleTaskRow 展开详情用）
+        _taskSeqCache = {};
+        filtered.forEach(function(t) { _taskSeqCache[t.id] = t; });
+        var html = '';
+        filtered.forEach(function(t) { html += renderTaskRow(t); });
+        list.innerHTML = html;
+        _taskSeqOffset = 50;
+        // 更新标题统计（与活跃任务 样式一致）
+        var heading = document.getElementById('task-sequence-heading');
+        if (heading) heading.innerHTML = '<span class="badge bg-secondary me-1">' + filtered.length + '</span>任务序列';
+    } catch (e) {
+        list.innerHTML = '<div class="text-danger small text-center py-3">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+/* 分页加载更多 task 记录 */
+async function loadMoreTasks() {
+    var list = document.getElementById('task-sequence-list');
+    try {
+        var data = await apiClient.request('/api/v2/tasks?limit=50&offset=' + _taskSeqOffset);
+        var tasks = data.tasks || [];
+        if (tasks.length === 0) {
+            toast('已加载全部记录', 'secondary');
+            return;
+        }
+        var html = '';
+        tasks.forEach(function(t) { html += renderTaskRow(t); });
+        list.insertAdjacentHTML('beforeend', html);
+        _taskSeqOffset += tasks.length;
+        tasks.forEach(function(t) { _taskSeqCache[t.id] = t; });
+    } catch (e) {
+        toast('加载失败: ' + e.message, 'danger');
+    }
+}
+
+/* 渲染单条 task 序列行（状态徽章 + goal + 时间 + 操作按钮） */
+function renderTaskRow(task) {
+    var meta = task.metadata || {};
+    var status = meta.status || 'unknown';
+    var labelMap = {pending: '待定', active: '活跃', completed: '已完成', archived: '已归档'};
+    var colorMap = {pending: 'secondary', active: 'success', completed: 'primary', archived: 'secondary'};
+    var label = labelMap[status] || status;
+    var color = colorMap[status] || 'secondary';
+    var parsed = parseTaskEval(task);
+    var goal = parsed.goal;
+    var ts = meta.created_at || 0;
+
+    var html = '<div class="d-flex justify-content-between align-items-center py-1 px-2 border-bottom border-secondary border-opacity-25" data-task-id="' + escapeHtml(task.id) + '" onclick="toggleTaskRow(this, \'' + escapeHtml(task.id) + '\')">';
+    html += '<div><span class="badge bg-' + color + ' bg-opacity-10 text-' + color + ' me-2" style="min-width:3rem;">' + label + '</span>';
+    html += '<span class="small">' + escapeHtml(goal) + '</span>';
+    html += '<span class="small text-secondary ms-2">' + (ts ? timeAgo(ts) : '') + '</span></div>';
+    html += '<div class="d-flex gap-1 align-items-center">';
+
+    if (status === 'pending') {
+        html += '<button class="btn btn-sm btn-outline-success py-0 px-1" onclick="event.stopPropagation();completeTask(\'' + escapeHtml(task.id) + '\')" title="完成"><i class="bi bi-check-lg"></i></button>';
+    }
+    if (status !== 'active') {
+        html += '<button class="btn btn-sm btn-outline-success py-0 px-1" onclick="event.stopPropagation();activateTask(\'' + escapeHtml(task.id) + '\')" title="激活"><i class="bi bi-arrow-counterclockwise"></i></button>';
+    }
+    if (status !== 'archived' && status !== 'active') {
+        html += '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="event.stopPropagation();deleteTask(\'' + escapeHtml(task.id) + '\')" title="删除"><i class="bi bi-trash"></i></button>';
+    }
+
+    html += '</div></div>';
+    return html;
+}
+
+/* 展开/折叠行：显示完整 done/todo/blocked */
+function toggleTaskRow(el, taskId) {
+    var detail = document.getElementById('task-detail-' + taskId);
+    if (detail) { detail.remove(); return; }
+    var task = _taskSeqCache[taskId];
+    if (!task) { toast('未找到 task 详情', 'warning'); return; }
+    var parsed = parseTaskEval(task);
+    var html = '<div id="task-detail-' + taskId + '" class="px-3 py-2 bg-dark bg-opacity-25 small">';
+    if (parsed.done.length > 0) {
+        html += '<div class="text-success mb-1">✅ 已完成</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+        parsed.done.forEach(function(i) { html += '<li class="text-success-emphasis">' + escapeHtml(i) + '</li>'; });
+        html += '</ul>';
+    }
+    if (parsed.todo.length > 0) {
+        html += '<div class="text-warning mb-1">📋 待做</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+        parsed.todo.forEach(function(i) { html += '<li class="text-warning-emphasis">☐ ' + escapeHtml(i) + '</li>'; });
+        html += '</ul>';
+    }
+    if (parsed.blocked.length > 0) {
+        html += '<div class="text-danger mb-1">🚫 阻塞</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+        parsed.blocked.forEach(function(i) { html += '<li class="text-danger">✗ ' + escapeHtml(i) + '</li>'; });
+        html += '</ul>';
+    }
+    html += '</div>';
+    el.insertAdjacentHTML('afterend', html);
+}
+
+/* 展开/收起全部任务详情 */
+var _taskSeqAllExpanded = false;
+
+function toggleAllTaskDetails() {
+    _taskSeqAllExpanded = !_taskSeqAllExpanded;
+    var btn = document.getElementById('btn-expand-all');
+    var list = document.getElementById('task-sequence-list');
+    if (!list) return;
+
+    if (_taskSeqAllExpanded) {
+        // 展开全部：遍历序列行，逐行展开详情
+        list.querySelectorAll('[data-task-id]').forEach(function(row) {
+            var taskId = row.getAttribute('data-task-id');
+            var detail = document.getElementById('task-detail-' + taskId);
+            if (!detail && _taskSeqCache[taskId]) {
+                var parsed = parseTaskEval(_taskSeqCache[taskId]);
+                var html = '<div id="task-detail-' + taskId + '" class="px-3 py-2 bg-dark bg-opacity-25 small">';
+                if (parsed.done.length > 0) {
+                    html += '<div class="text-success mb-1">✅ 已完成</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+                    parsed.done.forEach(function(i) { html += '<li class="text-success-emphasis">' + escapeHtml(i) + '</li>'; });
+                    html += '</ul>';
+                }
+                if (parsed.todo.length > 0) {
+                    html += '<div class="text-warning mb-1">📋 待做</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+                    parsed.todo.forEach(function(i) { html += '<li class="text-warning-emphasis">☐ ' + escapeHtml(i) + '</li>'; });
+                    html += '</ul>';
+                }
+                if (parsed.blocked.length > 0) {
+                    html += '<div class="text-danger mb-1">🚫 阻塞</div><ul class="list-unstyled mb-2" style="padding-left:1.2rem;">';
+                    parsed.blocked.forEach(function(i) { html += '<li class="text-danger">✗ ' + escapeHtml(i) + '</li>'; });
+                    html += '</ul>';
+                }
+                html += '</div>';
+                row.insertAdjacentHTML('afterend', html);
+            }
+        });
+        if (btn) btn.innerHTML = '<i class="bi bi-arrows-collapse"></i>';
+    } else {
+        // 收起全部
+        list.querySelectorAll('[id^="task-detail-"]').forEach(function(d) { d.remove(); });
+        if (btn) btn.innerHTML = '<i class="bi bi-arrows-expand"></i>';
+    }
+}
+
+/* 激活 Task */
+async function activateTask(id) {
+    if (_taskLoading) return;
+    if (!confirm("激活此 Task？原活跃任务 将自动标记为已完成。")) return;
+    _taskLoading = true;
+    try {
+        await apiClient.request('/api/v2/tasks/' + id + '/activate', {method: 'POST'});
+        toast('Task 已激活', 'success');
+        // 就地更新行状态，避免整表重渲染闪烁
+        if (_taskSeqCache && _taskSeqCache[id]) {
+            _taskSeqCache[id].metadata = _taskSeqCache[id].metadata || {};
+            _taskSeqCache[id].metadata.status = 'active';
+        }
+        var row = document.querySelector('[data-task-id="' + CSS.escape(id) + '"]');
+        if (row && _taskSeqCache && _taskSeqCache[id]) {
+            row.outerHTML = renderTaskRow(_taskSeqCache[id]);
+        }
+        _taskLoading = false;
+        loadTaskProgress();
+    } catch (e) {
+        _taskLoading = false;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+/* 任务模式：加载当前模式并更新 UI 指示器 */
+async function loadTaskMode() {
+    var btn = document.getElementById('btn-task-mode');
+    var label = document.getElementById('task-mode-label');
+    if (!btn || !label) return;
+    try {
+        var data = await apiClient.request('/api/v2/tasks/mode');
+        var isAuto = data.mode === 'auto';
+        btn.innerHTML = isAuto
+            ? '<i class="bi bi-toggle-on text-info"></i> <span id="task-mode-label">自动</span>'
+            : '<i class="bi bi-toggle-off"></i> <span id="task-mode-label">手动</span>';
+        btn.title = isAuto
+            ? '当前: 自动模式 (新 TASK_EVAL 自动替换旧任务)'
+            : '当前: 手动模式 (新 TASK_EVAL 进入待定队列)';
+        btn.className = 'btn btn-sm py-0 px-1 ' + (isAuto ? 'btn-outline-info' : 'btn-outline-secondary');
+    } catch (e) {
+        console.warn('加载任务模式失败:', e.message);
+    }
+}
+
+/* 任务模式：切换 auto ↔ manual */
+async function toggleTaskMode() {
+    try {
+        var cur = await apiClient.request('/api/v2/tasks/mode');
+        var newMode = cur.mode === 'auto' ? 'manual' : 'auto';
+        var result = await apiClient.request('/api/v2/tasks/mode', {
+            method: 'POST',
+            body: JSON.stringify({mode: newMode}),
+        });
+        if (result.ok) {
+            toast('任务模式已切换为: ' + (newMode === 'auto' ? '🔄 自动' : '🖐️ 手动'), 'info');
+            await loadTaskMode();
+        }
+    } catch (e) {
+        toast('切换失败: ' + e.message, 'danger');
+    }
+}
+
+/* 任务审计入口（延后至 v0.7.2，当前复用日期筛选） */
+function openTaskAudit() {
+    var date = document.getElementById('task-sequence-date').value;
+    loadTaskSequence(date);
+    toast('任务审计功能将在 v0.7.2 中提供', 'secondary');
+}
+
+async function triggerBriefing() {
+    var btn = document.getElementById('brf-generate-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
+    updateBrfBadge('generating');
+    try {
+        var body = {};
+        var dateEl = document.getElementById('brf-date');
+        if (dateEl && dateEl.value) body.date = dateEl.value;
+        var epSel = document.getElementById('brf-endpoint-select');
+        if (epSel && epSel.value) body.llm_endpoint = epSel.value;
+        var promptSel = document.getElementById('brf-prompt-select');
+        if (promptSel && promptSel.value) body.prompt_id = promptSel.value;
+        await apiClient.request('/api/v2/briefing/generate', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        toast('简报生成完成', 'success');
+        state.brf.statsCache = null;
+        await loadBriefingPanel();
+    } catch (e) {
+        toast('生成失败: ' + e.message, 'danger');
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>立即生成';
+}
+
+// === 5. Manual Suggestions (配置组 → 用户建议) ===
+// GET /api/manual-suggestions
+// DELETE /api/manual-suggestions/{id}
+// PUT /api/manual-suggestions/{id}/toggle-disable
+
+async function loadManualSuggestions() {
+    var container = document.getElementById('manual-suggestions-container');
+    if (!container) return;
+    container.innerHTML = renderSkeleton('list');
+    try {
+        var data = await apiClient.request('/api/manual-suggestions');
+        var items = data.items || [];
+        // 更新建议总数
+        var countEl = document.getElementById('suggestion-total-count');
+        if (countEl) countEl.textContent = items.length;
+
+        if (!items.length) {
+            container.innerHTML = '<div class="empty-state">' +
+                '<i class="bi bi-hand-index-thumb"></i>' +
+                '<p>暂无用户建议</p>' +
+                '<p class="hint">配置用户建议后，AI 会在适当时机主动推送有价值的信息</p>' +
+                '</div>';
+            return;
+        }
+
+        container.innerHTML = items.map(function(item) {
+            var disabled = item.disabled === true;
+            var opacity = disabled ? 'opacity-50' : '';
+            var keywords = item.trigger_keywords || [];
+            var kwTags = Array.isArray(keywords) ? keywords.map(function(k) {
+                return '<span class="badge bg-success bg-opacity-10 text-success me-1">' + escapeHtml(k) + '</span>';
+            }).join('') : '';
+            var modeBadge = item.trigger_mode === 'always'
+                ? '<span class="badge bg-secondary bg-opacity-25 text-secondary">始终</span>'
+                : '<span class="badge bg-info bg-opacity-25 text-info">关键词</span>';
+            var expiryBadge = '';
+            if (item.validity_minutes > 0 && item.expires_at > 0) {
+                if (Date.now() / 1000 > item.expires_at) {
+                    expiryBadge = '<span class="badge bg-danger bg-opacity-25 text-danger">已过期</span>';
+                }
+            }
+            var prioColor = {high: 'danger', medium: 'warning', low: 'success'}[item.priority] || 'secondary';
+            var ts = item.timestamp ? timeAgo(item.timestamp) : '';
+            var safeContent = escapeHtml(item.content || '').substring(0, 100);
+            var safeId = escapeHtml(item.id);
+            var toggleChecked = disabled ? '' : 'checked';
+            return '<div class="border rounded p-2 mb-1 bg-black bg-opacity-25 ' + opacity + '">' +
+                // 第一行：内容 + 开关 + 操作
+                '<div class="d-flex justify-content-between align-items-start mb-1">' +
+                    '<div class="d-flex gap-2 align-items-center flex-wrap flex-grow-1 me-2">' +
+                        '<span class="badge bg-' + prioColor + ' bg-opacity-10 text-' + prioColor + '" style="font-size:.6rem">' + escapeHtml(item.priority) + '</span>' +
+                        '<span class="small fw-semibold">' + safeContent + '</span>' +
+                    '</div>' +
+                    '<div class="d-flex gap-1 align-items-center flex-shrink-0">' +
+                        '<div class="form-check form-switch d-inline-block m-0 p-0" style="min-height:auto">' +
+                            '<input class="form-check-input" type="checkbox" role="switch" ' + toggleChecked +
+                            ' style="float:none;cursor:pointer;margin:0" onclick="toggleManualSuggestion(\'' + safeId + '\', this)">' +
+                        '</div>' +
+                        '<span class="small fw-bold ' + (disabled ? 'text-danger' : 'text-success') + '" style="min-width:3em">' + (disabled ? '已停用' : '启用') + '</span>' +
+                        '<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="window.editManualSuggestion(\'' + safeId + '\')" title="详情/编辑"><i class="bi bi-pencil"></i></button>' +
+                        '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteManualSuggestion(\'' + safeId + '\')" title="删除"><i class="bi bi-x"></i></button>' +
+                    '</div>' +
+                '</div>' +
+                // 第二行：标签 + 元数据
+                '<div class="d-flex gap-2 align-items-center flex-wrap small">' +
+                    modeBadge +
+                    expiryBadge +
+                    kwTags +
+                    '<span class="text-secondary">命中 ' + (item.hit_count || 0) + ' 次</span>' +
+                    '<span class="text-secondary">冷却 ' + (item.cooldown_minutes || 0) + 'min</span>' +
+                    '<span class="text-secondary">有效 ' + (item.validity_minutes || 0) + 'min</span>' +
+                    '<span class="text-secondary">' + ts + '</span>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger small text-center py-3">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+async function toggleManualSuggestion(id, checkbox) {
+    try {
+        var r = await apiClient.request('/api/manual-suggestions/' + id + '/toggle-disable', {method: 'PUT'});
+        var isDisabled = r.disabled;
+        toast(isDisabled ? '已停用' : '已启用', 'success');
+        // 刷新列表保持显示一致
+        loadManualSuggestions();
+    } catch (e) {
+        toast('操作失败: ' + e.message, 'danger');
+        checkbox.checked = !checkbox.checked;  // 还原开关状态
+    }
+}
+
+async function deleteManualSuggestion(id) {
+    if (!confirm('确定删除此用户建议？')) return;
+    try {
+        await apiClient.request('/api/manual-suggestions/' + id, {method: 'DELETE'});
+        toast('已删除', 'success');
+        loadManualSuggestions();
+    } catch (e) {
+        toast('删除失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 暂停推送开关（配合 #user-suggestions-panel） ---
+async function fetchNoSuggestionsStatus() {
+    try {
+        var data = await apiClient.request('/api/suggestions/no-suggestions-status', { method: 'GET' });
+        var toggle = document.getElementById('sug-pause-toggle');
+        if (toggle) toggle.checked = data.enabled === true;
+    } catch (e) {}
+}
+
+async function togglePause() {
+    var toggle = document.getElementById('sug-pause-toggle');
+    var wasEnabled = toggle ? toggle.checked : false;
+    try {
+        var data = await apiClient.request('/api/suggestions/toggle-pause', { method: 'POST' });
+        if (toggle) toggle.checked = data.enabled === true;
+        toast(data.enabled ? '已暂停推送' : '已恢复推送', data.enabled ? 'warning' : 'success');
+    } catch (e) {
+        if (toggle) toggle.checked = wasEnabled;
+        toast('操作失败: ' + e.message, 'danger');
+    }
+}
+
+// --- 用户建议 Modal 管理 ---
+
+var msKeywords = [];
+
+function initManualSuggestionModal() {
+    var keywordInput = document.getElementById('ms-keyword-input');
+    if (keywordInput) {
+        keywordInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addMsKeyword(this.value.trim());
+                this.value = '';
+            }
+        });
+    }
+
+    document.getElementById('ms-save-btn')?.addEventListener('click', saveManualSuggestion);
+
+    document.getElementById('ms-trigger-mode')?.addEventListener('change', function() {
+        toggleMsKeywordsVisibility(this.value);
+    });
+
+    var modalEl = document.getElementById('manualSuggestionModal');
+    if (modalEl) {
+        modalEl.addEventListener('show.bs.modal', function() {
+            var mode = document.getElementById('ms-trigger-mode').value;
+            toggleMsKeywordsVisibility(mode);
+        });
+        modalEl.addEventListener('hidden.bs.modal', resetMsForm);
+    }
+
+    // 关键词标签点击删除（事件委托）
+    document.getElementById('ms-keyword-tags')?.addEventListener('click', function(e) {
+        if (e.target.classList.contains('bi-x')) {
+            var span = e.target.closest('[data-keyword]');
+            if (span) {
+                removeMsKeyword(decodeURIComponent(span.getAttribute('data-keyword')));
+            }
+        }
+    });
+}
+
+function toggleMsKeywordsVisibility(mode) {
+    var section = document.getElementById('ms-keywords-section');
+    var hint = document.getElementById('ms-always-hint');
+    if (!section || !hint) return;
+    if (mode === 'always') {
+        section.style.display = 'none';
+        hint.style.display = '';
+    } else {
+        section.style.display = '';
+        hint.style.display = 'none';
+    }
+}
+
+function addMsKeyword(keyword) {
+    if (!keyword) return;
+    var errEl = document.getElementById('ms-keyword-error');
+    if (keyword.length > 50) {
+        if (errEl) { errEl.textContent = '关键词不超过 50 字符'; errEl.style.display = ''; }
+        return;
+    }
+    if (msKeywords.length >= 10) {
+        if (errEl) { errEl.textContent = '最多 10 个关键词'; errEl.style.display = ''; }
+        return;
+    }
+    if (msKeywords.includes(keyword)) {
+        if (errEl) { errEl.textContent = '关键词已存在: ' + keyword; errEl.style.display = ''; }
+        return;
+    }
+    if (errEl) errEl.style.display = 'none';
+    msKeywords.push(keyword);
+    renderMsTags();
+}
+
+function removeMsKeyword(keyword) {
+    msKeywords = msKeywords.filter(function(k) { return k !== keyword; });
+    renderMsTags();
+}
+
+function renderMsTags() {
+    var container = document.getElementById('ms-keyword-tags');
+    if (!container) return;
+    if (msKeywords.length === 0) {
+        container.innerHTML = '<span class="text-secondary small">暂无关键词</span>';
+        return;
+    }
+    container.innerHTML = msKeywords.map(function(kw) {
+        return '<span class="badge bg-info bg-opacity-25 text-info d-inline-flex align-items-center gap-1" data-keyword="' + encodeURIComponent(kw) + '">' +
+            escapeHtml(kw) +
+            '<i class="bi bi-x" style="cursor:pointer"></i>' +
+            '</span>';
+    }).join('');
+}
+
+function resetMsForm() {
+    document.getElementById('ms-edit-id').value = '';
+    document.getElementById('ms-content').value = '';
+    msKeywords = [];
+    renderMsTags();
+    document.getElementById('ms-priority').value = 'medium';
+    document.getElementById('ms-trigger-mode').value = 'keyword';
+    document.getElementById('ms-cooldown').value = 60;
+    document.getElementById('ms-validity').value = 0;
+    var errEl = document.getElementById('ms-keyword-error');
+    if (errEl) errEl.style.display = 'none';
+    toggleMsKeywordsVisibility('keyword');
+    document.getElementById('ms-modal-title').innerHTML = '<i class="bi bi-plus-circle me-1"></i>创建用户建议';
+}
+
+async function saveManualSuggestion() {
+    var content = document.getElementById('ms-content').value.trim();
+    if (!content) { toast('请输入建议内容', 'danger'); return; }
+    var mode = document.getElementById('ms-trigger-mode').value;
+    if (mode === 'keyword' && msKeywords.length === 0) {
+        toast('请至少添加一个触发关键词', 'danger');
+        return;
+    }
+
+    var editId = document.getElementById('ms-edit-id').value;
+    var isEdit = !!editId;
+    var saveBtn = document.getElementById('ms-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + (isEdit ? '保存中...' : '创建中...');
+
+    var body = {
+        content: content,
+        trigger_keywords: msKeywords,
+        priority: document.getElementById('ms-priority').value,
+        trigger_mode: mode,
+        cooldown_minutes: parseInt(document.getElementById('ms-cooldown').value) || 60,
+        validity_minutes: parseInt(document.getElementById('ms-validity').value) || 0,
+    };
+
+    try {
+        if (isEdit) {
+            await apiClient.request('/api/manual-suggestions/' + editId, { method: 'PUT', body: JSON.stringify(body) });
+            toast('已更新用户建议', 'success');
+        } else {
+            await apiClient.request('/api/manual-suggestions', { method: 'POST', body: JSON.stringify(body) });
+            toast(mode === 'always' ? '用户建议已创建，每次对话将自动推送' : '用户建议已创建，下次命中关键词时将触发推送', 'success');
+        }
+        bootstrap.Modal.getInstance(document.getElementById('manualSuggestionModal')).hide();
+        loadManualSuggestions();
+    } catch (e) {
+        toast((isEdit ? '保存' : '创建') + '失败: ' + (e.message || e), 'danger');
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> 保存';
+    }
+}
+
+// --- 编辑用户建议（供用户建议面板按钮调用） ---
+window.editManualSuggestion = function(id) {
+    apiClient.request('/api/manual-suggestions', { method: 'GET' }).then(function(data) {
+        var items = data.items || [];
+        var item = null;
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === id) { item = items[i]; break; }
+        }
+        if (!item) { toast('找不到该用户建议', 'danger'); return; }
+
+        document.getElementById('ms-edit-id').value = id;
+        document.getElementById('ms-content').value = item.content || '';
+        document.getElementById('ms-modal-title').innerHTML = '<i class="bi bi-pencil me-1"></i>编辑用户建议';
+
+        var keywords = item.trigger_keywords || [];
+        if (typeof keywords === 'string') { try { keywords = JSON.parse(keywords); } catch(e) { keywords = [keywords]; } }
+        msKeywords = Array.isArray(keywords) ? keywords.slice() : [];
+        renderMsTags();
+
+        document.getElementById('ms-priority').value = item.priority || 'medium';
+        document.getElementById('ms-trigger-mode').value = item.trigger_mode || 'keyword';
+        document.getElementById('ms-cooldown').value = item.cooldown_minutes || 60;
+        document.getElementById('ms-validity').value = item.validity_minutes || 0;
+        toggleMsKeywordsVisibility(item.trigger_mode || 'keyword');
+
+        var modal = new bootstrap.Modal(document.getElementById('manualSuggestionModal'));
+        modal.show();
+    }).catch(function(e) {
+        toast('加载建议详情失败: ' + e.message, 'danger');
+    });
+};
+
+// --- 提升为建议（供知识管理面板按钮调用） ---
+window.promoteToSuggestion = function(content) {
+    resetMsForm();
+    var modalEl = document.getElementById('manualSuggestionModal');
+    if (!modalEl) { toast('页面未完全加载', 'warning'); return; }
+    document.getElementById('ms-content').value = '关于记忆的建议：' + (content || '');
+    var modal = new bootstrap.Modal(modalEl);
+    modal.show();
+};
+
+async function loadInjectionMonitor() {
+    var knowledgeList = document.getElementById('inject-knowledge-list');
+    var manualList = document.getElementById('inject-manual-list');
+    if (!knowledgeList || !manualList) return;
+    try {
+        var data = await apiClient.request('/api/v2/activity-log?page=1&page_size=50');
+        var items = data.items || [];
+        var knowledgeItems = items.filter(function(i) { return i.injection_type === 'knowledge'; });
+        var manualItems = items.filter(function(i) { return i.injection_type === 'manual'; });
+
+        if (knowledgeItems.length === 0) {
+            knowledgeList.innerHTML = '<div class="text-center text-secondary py-3">暂无知识注入记录</div>';
+        } else {
+            var html = '<div class="list-group list-group-flush">';
+            knowledgeItems.forEach(function(i) {
+                var ts = i.timestamp ? timeAgo(i.timestamp) : '';
+                var types = (i.types || []).join(', ') || '?';
+                var ids = (i.memory_ids || []).slice(0, 3).map(function(id) { return id.slice(0, 8); }).join(', ');
+                html += '<div class="list-group-item bg-transparent border-secondary"><div class="d-flex justify-content-between"><span><span class="badge bg-info bg-opacity-25 text-info me-1">知识</span>类型: ' + escapeHtml(types) + '</span><small class="text-secondary">' + ts + '</small></div><div class="small text-secondary mt-1">' + (ids ? 'ID: ' + ids : '') + '</div></div>';
+            });
+            html += '</div>';
+            knowledgeList.innerHTML = html;
+        }
+
+        if (manualItems.length === 0) {
+            manualList.innerHTML = '<div class="text-center text-secondary py-3">暂无用户建议注入记录</div>';
+        } else {
+            var html = '<div class="list-group list-group-flush">';
+            manualItems.forEach(function(i) {
+                var ts = i.timestamp ? timeAgo(i.timestamp) : '';
+                var count = i.count || (i.memory_ids || []).length || '?';
+                html += '<div class="list-group-item bg-transparent border-secondary"><div class="d-flex justify-content-between"><span><span class="badge bg-warning bg-opacity-25 text-warning me-1">手工</span>注入 ' + count + ' 条</span><small class="text-secondary">' + ts + '</small></div></div>';
+            });
+            html += '</div>';
+            manualList.innerHTML = html;
+        }
+    } catch(e) {
+        knowledgeList.innerHTML = '<div class="text-center text-danger py-3">加载失败</div>';
+        manualList.innerHTML = '<div class="text-center text-danger py-3">加载失败</div>';
+    }
+}
+
+// ==== v0.7.1: 监控面板 ====
+
+// 简报注入开关
+function toggleBriefingInjection(briefingId, enabled) {
+    if (!briefingId) return;
+    apiClient.request('/api/v2/briefing/toggle-injection', {
+        method: 'POST',
+        body: JSON.stringify({briefing_id: briefingId, enabled: enabled}),
+        headers: {'Content-Type': 'application/json'},
+    }).then(function(res) {
+        if (res.ok) {
+            toast('简报注入' + (enabled ? '已开启' : '已关闭'), 'success');
+        } else {
+            toast('操作失败: ' + (res.error || '未知错误'), 'danger');
+            // 回滚开关状态
+            loadMonitorPanel();
+            loadBriefingToggle();
+        }
+    }).catch(function(e) {
+        toast('请求失败: ' + e.message, 'danger');
+        loadMonitorPanel();
+        loadBriefingToggle();
+    });
+}
+
+function loadMonitorPanel() {
+    var container = document.getElementById('monitor-container');
+    if (!container) return;
+    container.innerHTML = renderSkeleton('card');
+    apiClient.request('/api/v2/monitor/overview').then(function(data) {
+        var html = '';
+
+        // 4 卡片行
+        html += '<div class="row g-2 mb-3">';
+        var cards = [
+            {key: 'task', icon: 'bi-list-task', color: 'primary'},
+            {key: 'briefing', icon: 'bi-journal-text', color: 'info'},
+            {key: 'knowledge', icon: 'bi-database', color: 'success'},
+            {key: 'suggestion', icon: 'bi-hand-index-thumb', color: 'warning'},
+        ];
+        cards.forEach(function(c) {
+            var card = data.cards[c.key] || {status: 'none', label: '无'};
+            // 四卡片统一格式：名称主标签 + 状态/数量小字
+            var mainLabel = card.label;
+            var statusLine = '';
+            if (c.key === 'briefing') {
+                var d = card.date || new Date().toISOString().slice(0, 10);
+                mainLabel = d + ' 简报';
+                statusLine = '<div class="small text-secondary mt-1" style="font-size:0.65rem">' + escapeHtml(card.label) + '</div>';
+            } else if (c.key === 'task') {
+                if (card.status === 'none') {
+                    mainLabel = '当前无任务';
+                    statusLine = '<div class="small text-secondary mt-1" style="font-size:0.65rem">等待中</div>';
+                } else if (card.detail) {
+                    mainLabel = escapeHtml(card.detail);
+                    statusLine = '<div class="small text-secondary mt-1" style="font-size:0.65rem">' + escapeHtml(card.label) + '</div>';
+                }
+            } else if (c.key === 'knowledge') {
+                mainLabel = '知识';
+                statusLine = '<div class="small text-secondary mt-1" style="font-size:0.65rem">' + escapeHtml(card.label) + '</div>';
+            } else if (c.key === 'suggestion') {
+                mainLabel = '建议';
+                statusLine = '<div class="small text-secondary mt-1" style="font-size:0.65rem">' + escapeHtml(card.label) + '</div>';
+            }
+            html += '<div class="col-6 col-md-3">' +
+                '<div class="card h-100">' +
+                '<div class="card-body py-2 px-3 text-center">' +
+                '<div class="small"><i class="bi ' + c.icon + ' me-1"></i>' +
+                '<span class="text-' + c.color + '">' + escapeHtml(mainLabel) + '</span></div>' +
+                statusLine +
+                '</div></div></div>';
+        });
+        html += '</div>';
+
+        // 注入详情时间线（与事件看板一致卡片样式）
+        html += '<h6 class="mb-2">注入详情</h6>';
+        var timeline = data.injection_timeline || [];
+        if (timeline.length === 0) {
+            html += '<div class="empty-state py-3">' +
+                '<i class="bi bi-activity"></i>' +
+                '<p>暂无注入记录</p>' +
+                '<p class="hint">当有知识被注入到 AI 上下文中时会显示在这里</p>' +
+                '</div>';
+        } else {
+            var typeIconColor = {
+                'task':              {icon: 'bi-list-task',          label: '任务',     color: 'primary'},
+                'briefing':          {icon: 'bi-journal-text',       label: '简报',     color: 'info'},
+                'solution':          {icon: 'bi-lightbulb',          label: '方案',  color: 'success'},
+                'decision':          {icon: 'bi-signpost-2',         label: '决策',     color: 'warning'},
+                'lesson':            {icon: 'bi-book',               label: '经验',     color: 'danger'},
+                'process':           {icon: 'bi-gear',               label: '流程',     color: 'secondary'},
+                'manual_suggestion': {icon: 'bi-hand-index-thumb',   label: '建议',  color: 'info'},
+                'active_push':       {icon: 'bi-megaphone',          label: '推送',  color: 'warning'},
+            };
+            timeline.forEach(function(item) {
+                var tc = typeIconColor[item.type] || {icon: 'bi-question-circle', label: item.type, color: 'secondary'};
+                html += '<div class="d-flex align-items-start gap-2 mb-2 p-2 border rounded">';
+                html += '<i class="bi ' + tc.icon + ' text-' + tc.color + '" style="font-size:1.1rem"></i>';
+                html += '<div class="flex-grow-1">';
+                html += '<div class="d-flex justify-content-between">';
+                html += '<span class="badge bg-' + tc.color + ' bg-opacity-10 text-' + tc.color + '">' + tc.label + '</span>';
+                html += '<span class="small text-secondary">' +
+                    (item.score != null ? item.score.toFixed(2) : '—') +
+                    ' <small>' + item.time + '</small></span>';
+                html += '</div>';
+                html += '<div class="small mt-1">' + escapeHtml(item.content) + '</div>';
+                html += '</div></div>';
+            });
+        }
+
+        	                // 指令面板标题 + 两行卡片
+        var te = data.instruction_panel || {};
+        html += '<h6 class="mb-2 mt-3">指令面板</h6>';
+        // 任务指令卡片
+        html += '<div class="row g-2 mb-2"><div class="col-12"><div class="card"><div class="card-body py-2 px-3">' +
+            '<div class="d-flex align-items-center gap-2 mb-1">' +
+            '<i class="bi bi-file-text text-primary"></i>' +
+            '<span class="small fw-semibold">任务指令</span>' +
+            '<span class="badge bg-' + (te.task_eval_injected ? 'success' : 'secondary') + ' ms-auto" style="font-size:0.6rem">' +
+            (te.task_eval_injected ? '已注入' : '未注入') + '</span></div>' +
+            '<div class="small text-secondary" style="font-size:0.7rem;white-space:pre-wrap">' +
+            escapeHtml(te.task_eval_instruction || '') + '</div>' +
+            '</div></div></div></div>';
+        // 行为引导卡片
+        html += '<div class="row g-2 mb-2"><div class="col-12"><div class="card" id="behavior-guide-card"><div class="card-body py-2 px-3">' +
+            '<div class="d-flex align-items-center gap-2 mb-1">' +
+            '<i class="bi bi-journal-code text-info"></i>' +
+            '<span class="small fw-semibold">行为引导</span>' +
+            '<span class="badge bg-secondary ms-auto" id="bg-status-badge" style="font-size:0.6rem">加载中...</span></div>' +
+            '<div class="small text-secondary" id="bg-content" style="font-size:0.7rem;white-space:pre-wrap">加载中...</div>' +
+            '</div></div></div></div>';
+
+        container.innerHTML = html;
+
+        // 异步加载行为引导详情
+        apiClient.request('/api/v2/behavior-guide').then(function(bg) {
+            var badge = document.getElementById('bg-status-badge');
+            if (badge) {
+                badge.textContent = bg.loaded ? '已注入' : '未注入';
+                badge.className = 'badge bg-' + (bg.loaded ? 'success' : 'secondary') + ' ms-auto';
+                badge.style.fontSize = '0.6rem';
+            }
+            var content = document.getElementById('bg-content');
+            if (content) {
+                content.textContent = bg.loaded ? bg.content : '';
+            }
+        }).catch(function() {
+            var badge = document.getElementById('bg-status-badge');
+            if (badge) {
+                badge.textContent = '加载失败';
+                badge.className = 'badge bg-danger ms-auto';
+                badge.style.fontSize = '0.6rem';
+            }
+            var content = document.getElementById('bg-content');
+            if (content) content.textContent = '';
+        });
+    }).catch(function(e) {
+        container.innerHTML = '<div class="text-danger small py-3 text-center">加载失败: ' + escapeHtml(e.message) + '</div>';
+    });
+}
+
+// v0.7.1: 监控面板 Tab 切换时加载
+document.addEventListener('shown.bs.tab', function(e) {
+    var target = e.target;
+    if (target && target.getAttribute('data-bs-target') === '#monitor-panel') {
+        loadMonitorPanel();
+    }
+});
+
+// ==== 通用设置面板已移除（语言切换恢复至顶部工具栏） ====
+
+// === 6. Lazy Loading Event Listeners ===
+// 子面板 tab 切换时按需加载对应数据
+
+document.querySelector('[data-bs-target="#task-progress-panel"]')?.addEventListener('shown.bs.tab', function() {
+    loadTaskProgress();
+    // v0.7.1: 切换 Tab 时同时加载序列
+    loadTaskSequence();
+});
+document.querySelector('[data-bs-target="#memory-stream-panel"]')?.addEventListener('shown.bs.tab', function() {
+    loadMemoryStream();
+});
+document.querySelector('[data-bs-target="#user-suggestions-panel"]')?.addEventListener('shown.bs.tab', function() {
+    loadManualSuggestions();
+});
+document.querySelector('[data-bs-target="#watchlist-panel"]')?.addEventListener('shown.bs.tab', function() {
+    loadWatchlist();
+});
+document.querySelector('[data-bs-target="#injection-monitor-panel"]')?.addEventListener('shown.bs.tab', function() {
+    loadInjectionMonitor();
+});
+document.querySelector('[data-bs-target="#project-briefing-panel"]')?.addEventListener('shown.bs.tab', function() {
+    state.brf.statsCache = null;
+    loadBriefingPanel();
+});
+
+// 展开全部/收起全部
+document.getElementById('brf-expand-all-btn')?.addEventListener('click', function() {
+    state.brf._allExpanded = !state.brf._allExpanded;
+    var icon = this.querySelector('i');
+    icon.className = state.brf._allExpanded ? 'bi bi-arrows-collapse' : 'bi bi-arrows-expand';
+    document.querySelectorAll('#brf-history-list .brf-row').forEach(function(row) {
+        var id = row.getAttribute('data-id');
+        var next = row.nextElementSibling;
+        if (state.brf._allExpanded && (!next || !next.classList.contains('brf-detail-card'))) {
+            loadBrfDetail(id, row);
+        } else if (!state.brf._allExpanded && next && next.classList.contains('brf-detail-card')) {
+            next.remove();
+            row.querySelector('.brf-expand i').className = 'bi bi-chevron-right';
+        }
+    });
+});
+
+// ==== F9 SSE 实时推送 ====
+
+// 单例 EventSource 实例（C4 约束）
+var _sseClient = null;
+var _ssePollInterval = null;
+var _sseHealthTimer = null;
+var _sseReconnectTimer = null;
+var _sseConsecutiveFailures = 0;
+var _sseMaxFailures = 3;
+var _sseLastEventTime = Date.now();
+var _taskLoading = false;
+// v0.7.1: Task 序列分页偏移 + 缓存
+var _taskSeqOffset = 50;
+var _taskSeqCache = {};
+
+function _sseTrackEvent() {
+    _sseLastEventTime = Date.now();
+    _sseConsecutiveFailures = 0;
+}
+
+function _sseFallback(reason) {
+    console.log('[SSE] 降级轮询触发: reason=' + reason);
+    if (_sseClient) {
+        _sseClient.close();
+        _sseClient = null;
+    }
+    if (_ssePollInterval) {
+        clearInterval(_ssePollInterval);
+        _ssePollInterval = null;
+    }
+
+    // 30s 轮询
+    _ssePollInterval = setInterval(function() {
+        loadMemoryStream();
+        loadWatchlist();
+        loadTaskProgress();
+        loadManualSuggestions();
+    }, 30000);
+    console.log('[SSE] 降级轮询已启动 (30s 间隔)');
+
+    // 10s 周期重连（替代单次 30s timer）
+    if (_sseReconnectTimer) {
+        clearInterval(_sseReconnectTimer);
+    }
+    _sseReconnectTimer = setInterval(function() {
+        console.log('[SSE] 重连尝试...');
+        fetch('/api/v2/sse-health').then(function(r) {
+            if (r.ok) {
+                console.log('[SSE] 重连成功，切回 SSE');
+                clearInterval(_ssePollInterval);
+                _ssePollInterval = null;
+                clearInterval(_sseReconnectTimer);
+                _sseReconnectTimer = null;
+                _sseConsecutiveFailures = 0;
+                initSSE();
+            }
+        }).catch(function() {
+            console.log('[SSE] 重连失败，继续轮询');
+        });
+    }, 10000);
+}
+
+// ==== v0.7.1 简报聚合视图（替换旧 loadBriefing） ====
+// 加载简报注入开关状态
+function loadBriefingToggle() {
+    var container = document.getElementById('brf-injection-toggle');
+    if (!container) return;
+    apiClient.request('/api/v2/monitor/overview').then(function(data) {
+        var card = data.cards && data.cards.briefing;
+        if (card && card.allow_toggle) {
+            var checked = !card.delivered ? 'checked' : '';
+            var isEnabled = !card.delivered;
+            container.style.display = 'inline-flex';
+            container.innerHTML =
+                '<button class="btn btn-sm py-0 px-1 ' + (isEnabled ? 'btn-outline-info' : 'btn-outline-secondary') + '" ' +
+                'onclick="toggleBriefingInjection(\'' + escapeHtml(card.briefing_id) + '\', ' + (!isEnabled) + '); loadBriefingToggle()" ' +
+                'title="简报注入' + (isEnabled ? '已开启' : '已关闭') + '">' +
+                '<i class="bi bi-toggle-' + (isEnabled ? 'on text-info' : 'off') + '"></i> ' +
+                '<span>允许注入</span></button>';
+        } else {
+            container.style.display = 'none';
+        }
+    }).catch(function() {
+        var c = document.getElementById('brf-injection-toggle');
+        if (c) c.style.display = 'none';
+    });
+}
+
+async function loadBriefingPanel() {
+    await Promise.all([
+        loadBrfStats(),
+        loadBrfToday(),
+        loadBrfFilters(),
+    ]);
+    loadBrfHistory(1);
+    loadBriefingToggle();
+    setTimeout(adjustBrfListHeight, 100);
+}
+
+function updateBrfBadge(dateOrState) {
+    var badge = document.getElementById('brf-status-badge');
+    if (!badge) return;
+    if (dateOrState === 'generating') {
+        badge.textContent = '生成中...';
+        badge.className = 'badge bg-warning';
+    } else if (dateOrState) {
+        badge.textContent = '简报 ' + dateOrState;
+        badge.className = 'badge bg-success';
+    } else {
+        badge.textContent = '未生成';
+        badge.className = 'badge bg-secondary';
+    }
+}
+
+// 加载简报端点/提示词选择器（仿今日回顾）
+async function loadBrfFilters() {
+    try {
+        var data = await api('/api/llm/endpoints');
+        var epSel = document.getElementById('brf-endpoint-select');
+        if (!epSel) return;
+        epSel.innerHTML = '<option value="">(使用默认端点)</option>';
+        (data.endpoints || []).forEach(function(ep) {
+            var opt = document.createElement('option');
+            opt.value = ep.name;
+            opt.textContent = ep.name + (ep.is_active ? ' ✓' : '');
+            if (ep.is_active) opt.selected = true;
+            epSel.appendChild(opt);
+        });
+    } catch (e) {
+        console.warn('加载 LLM 端点列表失败:', e);
+    }
+    cascadeBrfPrompt();
+}
+
+function cascadeBrfPrompt() {
+    var epSel = document.getElementById('brf-endpoint-select');
+    var ep = epSel ? epSel.value : '';
+    var sel = document.getElementById('brf-prompt-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    sel.appendChild(Object.assign(document.createElement('option'), {value: '', textContent: '(自动选择提示词)'}));
+    if (!_allTemplatesCache.length) return;
+    var filtered;
+    if (ep) {
+        filtered = _allTemplatesCache.filter(function(t) {
+            return t.template_type === 'briefing' && (t.id === ep + '@briefing' || t.id === 'default@briefing');
+        });
+        if (!filtered.length) {
+            filtered = _allTemplatesCache.filter(function(t) { return t.template_type === 'briefing'; });
+        }
+    } else {
+        filtered = _allTemplatesCache.filter(function(t) { return t.template_type === 'briefing'; });
+    }
+    if (!filtered.length && ep) {
+        filtered = _allTemplatesCache.filter(function(t) { return t.template_type === 'briefing'; });
+    }
+    filtered.forEach(function(t) {
+        var opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name + ' v' + (t.version || 1);
+        if (t.version) opt.dataset.version = t.version;
+        sel.appendChild(opt);
+    });
+}
+
+async function loadBrfStats() {
+    var row = document.getElementById('brf-stats-row');
+    if (!row) return;
+    try {
+        var thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+        var data = await apiClient.request('/api/v2/briefing/history?limit=30&since_date=' + thirtyDaysAgo);
+        var list = data.briefings || [];
+        if (list.length === 0) { row.style.display = 'none'; return; }
+        row.style.display = '';
+        state.brf.statsCache = list;
+
+        var totalSessions = 0, totalKnowledge = 0, fullDays = 0, consecutiveFull = 0, hasDataDays = 0;
+        var latestGenerated = '--', today = new Date().toISOString().slice(0, 10);
+
+        list.forEach(function(b) {
+            hasDataDays++;
+            totalSessions += (b.session_count || 0);
+            totalKnowledge += (b.new_knowledge_count || 0);
+            if (b.quality === 'full') fullDays++;
+        });
+
+        var sorted = list.slice().sort(function(a, b) { return a.briefing_date.localeCompare(b.briefing_date); });
+        for (var i = sorted.length - 1; i >= 0; i--) {
+            if (sorted[i].briefing_date >= today) continue;
+            if (sorted[i].quality === 'full') consecutiveFull++;
+            else break;
+        }
+
+        var avgRounds = hasDataDays > 0 ? Math.round(totalSessions / hasDataDays) : 0;
+        if (list[0] && list[0].generated_at) latestGenerated = formatTime(list[0].generated_at);
+
+        row.innerHTML =
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">高质量天数</div><div class="fw-bold" style="color:#4fc3f7">' + fullDays + '</div></div></div>' +
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">连续 full</div><div class="fw-bold" style="color:#81c784">' + consecutiveFull + '</div></div></div>' +
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">总会话数</div><div class="fw-bold" style="color:#ffb74d">' + totalSessions + '</div></div></div>' +
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">知识产出</div><div class="fw-bold" style="color:#ba68c8">' + totalKnowledge + '</div></div></div>' +
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">日均轮次</div><div class="fw-bold" style="color:#e57373">' + avgRounds + '</div></div></div>' +
+            '<div class="col"><div class="card brf-stats-card py-2"><div class="small text-secondary">最近生成</div><div class="fw-bold" style="font-size:0.85rem">' + escapeHtml(latestGenerated) + '</div></div></div>';
+    } catch (e) {
+        row.style.display = 'none';
+    }
+}
+
+async function loadBrfToday() {
+    var container = document.getElementById('brf-today-container');
+    if (!container) return;
+    container.innerHTML = '<div class="text-center text-secondary py-3"><div class="spinner-border spinner-border-sm me-2" role="status"></div><span>加载中...</span></div>';
+    try {
+        // 不传 date 参数，由后端返回最近5天最新简报
+        var data = await apiClient.request('/api/v2/briefing/current');
+        if (!data.exists) {
+            container.innerHTML =
+                '<div class="brf-today-card text-center py-4"><i class="bi bi-journal-text" style="font-size:2rem;display:block;margin-bottom:8px;"></i>' +
+                '<p class="mb-1">暂无简报</p><p class="small text-secondary">最近5天无简报</p></div>';
+            updateBrfBadge(null);
+            return;
+        }
+        var c = data.content || {};
+        var quality = data.quality || 'simple';
+        var badgeClass = quality === 'full' ? 'bg-success' : 'bg-info';
+        var sc = c.session_count || 0;
+        var nc = c.new_knowledge_count || 0;
+        var dc = c.task_done_count || 0;
+        var tc = c.task_todo_count || 0;
+
+        // 兼容新/旧格式摘要
+        var summaryText = c.summary || '';
+        if (!summaryText && c.task && c.task.progress) {
+            var p = c.task.progress;
+            summaryText = '项目: ' + (c.task.project || '?') + ' | 进度: ' + (p.summary || (p.done.length + '/' + (p.done.length + p.pending.length)));
+        }
+        if (summaryText.length > 150) summaryText = summaryText.slice(0, 150) + '...';
+
+        var qualityLabel = quality === 'full' ? '完整' : '简版';
+        var bd = data.briefing_date || data.date || '';
+        var sourceHint = '';
+        if (bd && bd !== data.date) {
+            sourceHint = '<span class="small text-secondary ms-2">（来自 ' + escapeHtml(bd) + '）</span>';
+        }
+
+        container.innerHTML =
+            '<div class="brf-today-card" id="brf-today-card">' +
+            '<div class="brf-header"><strong>项目简报</strong>' + sourceHint + '</div>' +
+            '<div class="brf-header mt-1"><span class="badge ' + badgeClass + '">' + qualityLabel + '</span>' +
+            '<span class="small text-secondary ms-1">' + escapeHtml(data.date) + '</span>' +
+            '<span class="small text-secondary ms-2">会话: ' + sc + ' · 知识: ' + nc + ' · 任务: ' + dc + '/' + (dc + tc) + '</span>' +
+            '<span class="flex-grow-1"></span>' +
+            '<span class="brf-expand-btn" onclick="toggleBrfToday()">展开 <i class="bi bi-chevron-down"></i></span></div>' +
+            '<div class="brf-summary">' + escapeHtml(summaryText) + '</div>' +
+            '<div id="brf-today-detail" class="brf-detail-card mt-2" style="display:none;"></div></div>';
+        state.brf._todayData = data;
+        updateBrfBadge(data.date);
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger small text-center py-3">加载失败: <a href="#" onclick="loadBrfToday();return false;">[重试]</a></div>';
+    }
+}
+
+function toggleBrfToday() {
+    var detail = document.getElementById('brf-today-detail');
+    var expandBtn = document.querySelector('.brf-expand-btn');
+    if (!detail || !expandBtn) return;
+    if (detail.style.display !== 'none') {
+        detail.style.display = 'none';
+        expandBtn.innerHTML = '展开 <i class="bi bi-chevron-down"></i>';
+        return;
+    }
+    var data = state.brf._todayData;
+    if (!data || !data.content) return;
+    var c = data.content;
+    var isNewFormat = c.hasOwnProperty('achieved') || c.hasOwnProperty('file_changes') || c.hasOwnProperty('bug_fixes');
+    var html = '';
+
+    if (isNewFormat) {
+        // === 新 11 字段 Schema ===
+        // 任务
+        if (c.task) {
+            var t = c.task;
+            html += '<div class="brf-detail-section"><span class="label">任务</span><div>' +
+                '<b>' + escapeHtml(t.project || '') + '</b> — ' + escapeHtml(t.goal || '') +
+                ' [' + escapeHtml(t.status_label || t.status || '') + ']' +
+                '<br><span class="small text-secondary">进度: ' + escapeHtml(t.progress ? t.progress.summary || (t.progress.done.length + '/' + (t.progress.done.length + t.progress.pending.length)) : '?') + '</span>' +
+                '</div></div>';
+            if (t.progress && t.progress.done && t.progress.done.length) {
+                html += '<div class="brf-detail-section"><span class="label">已完成</span><ul class="mb-0 ps-3">';
+                t.progress.done.forEach(function(d) { html += '<li>' + escapeHtml(d) + '</li>'; });
+                html += '</ul></div>';
+            }
+            if (t.progress && t.progress.pending && t.progress.pending.length) {
+                html += '<div class="brf-detail-section"><span class="label">待办</span><ul class="mb-0 ps-3">';
+                t.progress.pending.forEach(function(p) { html += '<li>' + escapeHtml(p) + '</li>'; });
+                html += '</ul></div>';
+            }
+        }
+
+        // 工作项
+        if (c.achieved && c.achieved.length) {
+            html += '<div class="brf-detail-section"><span class="label">工作项</span><ul class="mb-0 ps-3">';
+            c.achieved.forEach(function(a) {
+                var tag = a.type ? '<span class="badge bg-secondary" style="font-size:0.7rem">' + escapeHtml(a.type) + '</span> ' : '';
+                html += '<li>' + tag + '<b>' + escapeHtml(a.what) + '</b>' +
+                    (a.detail ? '<br><span class="small">' + escapeHtml(a.detail) + '</span>' : '') +
+                    (a.file ? '<br><code class="small">' + escapeHtml(a.file) + '</code>' : '') +
+                    '</li>';
+            });
+            html += '</ul></div>';
+        }
+
+        // 文件变更
+        if (c.file_changes) {
+            var fc = c.file_changes;
+            html += '<div class="brf-detail-section"><span class="label">文件变更</span><div>' +
+                escapeHtml(fc.summary || '') +
+                (fc.uncommitted_changes ? '<br><span class="small text-warning">[未提交] ' + escapeHtml(fc.uncommitted_changes) + '</span>' : '') +
+                '</div>';
+            if (fc.key_changes && fc.key_changes.length) {
+                html += '<ul class="mb-0 ps-3">';
+                fc.key_changes.forEach(function(kc) {
+                    var statusTag = kc.commit_status === 'uncommitted' ? ' <span class="badge bg-warning" style="font-size:0.65rem">未提交</span>' : '';
+                    html += '<li><code>' + escapeHtml(kc.file) + '</code>' + statusTag +
+                        '<br><span class="small">' + escapeHtml(kc.purpose || '') + '</span></li>';
+                });
+                html += '</ul>';
+            }
+            html += '</div>';
+        }
+
+        // 决策
+        if (c.decisions && c.decisions.length) {
+            html += '<div class="brf-detail-section"><span class="label">决策</span><ul class="mb-0 ps-3">';
+            c.decisions.forEach(function(d) {
+                html += '<li><b>' + escapeHtml(d.what) + '</b>' +
+                    (d.reason ? '<br><span class="small">' + escapeHtml(d.reason) + '</span>' : '') +
+                    (d.excluded && d.excluded.length ? '<br><span class="small text-secondary">排除: ' + escapeHtml(d.excluded.join(', ')) + '</span>' : '') +
+                    '</li>';
+            });
+            html += '</ul></div>';
+        }
+
+        // Bug 修复
+        if (c.bug_fixes && c.bug_fixes.length) {
+            html += '<div class="brf-detail-section"><span class="label">Bug 修复</span><ul class="mb-0 ps-3">';
+            c.bug_fixes.forEach(function(b) {
+                var confClass = b.confidence === 'high' ? 'bg-success' : b.confidence === 'medium' ? 'bg-warning' : 'bg-secondary';
+                html += '<li><b>' + escapeHtml(b.problem) + '</b>' +
+                    ' <span class="badge ' + confClass + '" style="font-size:0.65rem">' + escapeHtml(b.confidence || '') + '</span>' +
+                    (b.root_cause ? '<br><span class="small">根因: ' + escapeHtml(b.root_cause) + '</span>' : '') +
+                    (b.fix ? '<br><span class="small">修复: ' + escapeHtml(b.fix) + '</span>' : '') +
+                    (b.file ? '<br><code class="small">' + escapeHtml(b.file) + '</code>' : '') +
+                    '</li>';
+            });
+            html += '</ul></div>';
+        }
+
+        // 新增知识
+        if (c.new_knowledge && c.new_knowledge.length) {
+            html += '<div class="brf-detail-section"><span class="label">新增知识</span><ul class="mb-0 ps-3">';
+            c.new_knowledge.forEach(function(k) { html += '<li class="small">' + escapeHtml(k) + '</li>'; });
+            html += '</ul></div>';
+        }
+
+        // 建议下一步
+        if (c.suggested_next) {
+            html += '<div class="brf-detail-section"><span class="label">建议下一步</span><div>' +
+                escapeHtml(c.suggested_next.summary || '') +
+                (c.suggested_next.candidates && c.suggested_next.candidates.length ? '<ul class="mb-0 ps-3 mt-1"><li class="small">' + escapeHtml(c.suggested_next.candidates.join('</li><li class="small">')) + '</li></ul>' : '') +
+                '</div></div>';
+        }
+    } else {
+        // === 旧 4 字段 Schema（向前兼容） ===
+        html += '<div class="brf-detail-section"><span class="label">摘要</span><div>' + escapeHtml(c.summary || '') + '</div></div>';
+        html += '<div class="brf-detail-section"><span class="label">任务状态</span><div>' + escapeHtml(c.task_status || '无') + '</div></div>' +
+            '<div class="brf-detail-section"><span class="label">关键事件</span><ul class="mb-0 ps-3">';
+        if (c.key_events && c.key_events.length) {
+            c.key_events.forEach(function(e) { html += '<li>' + escapeHtml(e) + '</li>'; });
+        } else {
+            html += '<li class="text-secondary">无</li>';
+        }
+        html += '</ul></div>' +
+            '<div class="brf-detail-section"><span class="label">新增知识</span><ul class="mb-0 ps-3">';
+        if (c.new_knowledge && c.new_knowledge.length) {
+            c.new_knowledge.forEach(function(k) { html += '<li>' + escapeHtml(k) + '</li>'; });
+        } else {
+            html += '<li class="text-secondary">无</li>';
+        }
+        html += '</ul></div>' +
+            '<div class="brf-detail-section"><span class="label">明日计划</span><div>' + escapeHtml(c.plan_tomorrow || '无') + '</div></div>';
+    }
+
+    detail.innerHTML = html;
+    detail.style.display = '';
+    expandBtn.innerHTML = '收起 <i class="bi bi-chevron-up"></i>';
+}
+
+async function loadBrfHistory(page) {
+    if (page !== undefined) state.brf.page = page;
+    var list = document.getElementById('brf-history-list');
+    var container = document.getElementById('brf-history-container');
+    if (!list) return;
+
+    var items;
+    if (state.brf.statsCache && page === 1) {
+        items = state.brf.statsCache.slice(0, state.brf.pageSize);
+        state.brf.total = state.brf.statsCache.length;
+    } else {
+        try {
+            var params = new URLSearchParams();
+            params.set('limit', state.brf.pageSize);
+            params.set('offset', (state.brf.page - 1) * state.brf.pageSize);
+            var data = await apiClient.request('/api/v2/briefing/history?' + params.toString());
+            state.brf.total = data.total || 0;
+            items = data.briefings || [];
+        } catch (e) {
+            list.innerHTML = '<div class="text-danger small text-center py-3">加载失败: <a href="#" onclick="loadBrfHistory(1);return false;">[重试]</a></div>';
+            return;
+        }
+    }
+    state.brf.items = items || [];
+
+    if (state.brf.items.length > 0) {
+        container.style.display = '';
+        state.brf.latestDate = state.brf.items[0].briefing_date;
+    }
+
+    var heading = document.getElementById('brf-history-heading');
+    if (heading) heading.textContent = '\u{1F4CB} 历史简报 共 ' + (state.brf.total || 0) + ' 条';
+
+    if (!state.brf.items.length) {
+        list.innerHTML = '<div class="text-center text-secondary small py-3">暂无历史简报</div>';
+        renderBrfPagination();
+        return;
+    }
+
+    function _formatBrfTs(ts) {
+        if (!ts) return '';
+        var d = new Date(ts * 1000);
+        var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    list.innerHTML = state.brf.items.map(function(b) {
+        var badgeClass = b.quality === 'full' ? 'bg-success' : 'bg-info';
+        var qualityLabel = b.quality === 'full' ? '完整' : '简版';
+        var ts = _formatBrfTs(b.generated_at);
+        var showSummary = b.quality === 'full';
+        return '<div class="brf-row' + (b.quality === 'full' ? '' : ' brf-row-simple') + '" data-id="' + escapeHtml(b.id) + '">' +
+            '<span class="brf-quality ' + badgeClass + '">' + qualityLabel + '</span>' +
+            '<span class="brf-date">' + escapeHtml(b.briefing_date || '') + ' 项目简报</span>' +
+            '<span class="brf-ts small text-secondary">' + ts + '</span>' +
+            (showSummary ? '<span class="brf-summary">' + escapeHtml(b.summary || '') + '</span>' : '') +
+            '<span class="brf-meta">' + (b.session_count || 0) + '会话</span>' +
+            '<span class="brf-del-btn" title="删除此简报"><i class="bi bi-trash3 text-danger"></i></span>' +
+            '<span class="brf-expand"><i class="bi bi-chevron-right"></i></span></div>';
+            '<span class="brf-meta">' + (b.session_count || 0) + '会话</span>' +
+            '<span class="brf-del-btn" title="删除此简报"><i class="bi bi-trash3 text-danger"></i></span>' +
+            '<span class="brf-expand"><i class="bi bi-chevron-right"></i></span></div>';
+    }).join('');
+
+    list.querySelectorAll('.brf-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('.brf-del-btn')) return;
+            var id = this.getAttribute('data-id');
+            var next = this.nextElementSibling;
+            if (next && next.classList.contains('brf-detail-card')) {
+                next.remove();
+                this.querySelector('.brf-expand i').className = 'bi bi-chevron-right';
+            } else {
+                loadBrfDetail(id, this);
+            }
+        });
+        var delBtn = row.querySelector('.brf-del-btn');
+        if (delBtn) {
+            delBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var id = row.getAttribute('data-id');
+                if (!confirm('确定删除此简报？')) return;
+                apiClient.request('/api/v2/briefing/' + encodeURIComponent(id), {method: 'DELETE'}).then(function() {
+                    state.brf.statsCache = null;
+                    loadBrfHistory(state.brf.page);
+                    toast('简报已删除', 'success');
+                }).catch(function(err) {
+                    toast('删除失败: ' + err.message, 'danger');
+                });
+            });
+        }
+    });
+
+    renderBrfPagination();
+    setTimeout(adjustBrfListHeight, 50);
+}
+
+function renderBrfPagination() {
+    var totalPages = Math.ceil(state.brf.total / state.brf.pageSize) || 1;
+    var nav = document.getElementById('brf-pagination-nav');
+    if (!nav) return;
+    if (state.brf.total === 0) { nav.innerHTML = ''; return; }
+    var html = '<span class="small text-secondary me-1">' + state.brf.page + '/' + totalPages + '</span>';
+    html += '<button class="btn btn-sm btn-outline-secondary py-0" onclick="goBrfPage(' + (state.brf.page - 1) + ')" ' + (state.brf.page <= 1 ? 'disabled' : '') + '><i class="bi bi-chevron-left"></i></button>';
+    var start = Math.max(1, state.brf.page - 2);
+    var end = Math.min(totalPages, state.brf.page + 2);
+    for (var p = start; p <= end; p++) {
+        html += '<button class="btn btn-sm ' + (p === state.brf.page ? 'btn-primary' : 'btn-outline-secondary') + ' py-0 ms-1" onclick="goBrfPage(' + p + ')">' + p + '</button>';
+    }
+    html += '<button class="btn btn-sm btn-outline-secondary py-0 ms-1" onclick="goBrfPage(' + (state.brf.page + 1) + ')" ' + (state.brf.page >= totalPages ? 'disabled' : '') + '><i class="bi bi-chevron-right"></i></button>';
+    nav.innerHTML = html;
+}
+
+function goBrfPage(page) {
+    if (page < 1 || page > Math.ceil(state.brf.total / state.brf.pageSize)) return;
+    state.brf.page = page;
+    loadBrfHistory(page);
+}
+
+async function loadBrfDetail(id, rowEl) {
+    var expandIcon = rowEl.querySelector('.brf-expand i');
+    expandIcon.className = 'bi bi-arrow-clockwise spinner-border spinner-border-sm';
+    try {
+        var data = await apiClient.request('/api/v2/briefing/' + encodeURIComponent(id));
+        var c = data.content || {};
+        var html = '<div class="brf-detail-card">';
+
+        function arrToLis(arr) {
+            if (!arr || !arr.length) return '<li class="text-secondary">无</li>';
+            return arr.map(function(x) {
+                if (typeof x === 'string') return '<li>' + escapeHtml(x) + '</li>';
+                if (typeof x === 'object') {
+                    var s = x.what || x.file || x.detail || JSON.stringify(x);
+                    return '<li>' + escapeHtml(s) + '</li>';
+                }
+                return '<li>' + escapeHtml(String(x)) + '</li>';
+            }).join('');
+        }
+
+        // 新 11-field 格式 (quality=full)
+        if (data.quality === 'full' && (c.task || c.achieved || c.file_changes || c.decisions)) {
+            if (c.task) {
+                var t = c.task;
+                html += '<div class="brf-detail-section"><span class="label">任务</span><div>' +
+                    '[' + escapeHtml(t.status_label || t.status || '') + '] ' +
+                    escapeHtml(t.goal || '') +
+                    (t.progress ? ' (' + escapeHtml(t.progress.summary || '') + ')' : '') +
+                    '</div></div>';
+            }
+            if (c.achieved && c.achieved.length) {
+                html += '<div class="brf-detail-section"><span class="label">已完成工作</span><ul class="mb-0 ps-3">';
+                c.achieved.forEach(function(a) {
+                    html += '<li>' + escapeHtml(a.what || '') + (a.detail ? '<br><span class="text-secondary">' + escapeHtml(a.detail) + '</span>' : '') + '</li>';
+                });
+                html += '</ul></div>';
+            }
+            if (c.file_changes && c.file_changes.length) {
+                html += '<div class="brf-detail-section"><span class="label">文件变更</span><ul class="mb-0 ps-3">' + arrToLis(c.file_changes) + '</ul></div>';
+            }
+            if (c.decisions && c.decisions.length) {
+                html += '<div class="brf-detail-section"><span class="label">决策</span><ul class="mb-0 ps-3">' + arrToLis(c.decisions) + '</ul></div>';
+            }
+            if (c.bug_fixes && c.bug_fixes.length) {
+                html += '<div class="brf-detail-section"><span class="label">Bug 修复</span><ul class="mb-0 ps-3">' + arrToLis(c.bug_fixes) + '</ul></div>';
+            }
+            if (c.new_knowledge && c.new_knowledge.length) {
+                html += '<div class="brf-detail-section"><span class="label">新知识</span><ul class="mb-0 ps-3">' + arrToLis(c.new_knowledge) + '</ul></div>';
+            }
+            if (c.suggested_next) {
+                html += '<div class="brf-detail-section"><span class="label">建议下一步</span><div>' + escapeHtml(c.suggested_next) + '</div></div>';
+            }
+        } else {
+            // 旧 4-field 格式 (fallback/simple)
+            html += '<div class="brf-detail-section"><span class="label">摘要</span><div>' + escapeHtml(c.summary || '') + '</div></div>' +
+                '<div class="brf-detail-section"><span class="label">任务状态</span><div>' + escapeHtml(c.task_status || '无') + '</div></div>' +
+                '<div class="brf-detail-section"><span class="label">关键事件</span><ul class="mb-0 ps-3">';
+            html += arrToLis(c.key_events);
+            html += '</ul></div>' +
+                '<div class="brf-detail-section"><span class="label">明日计划</span><div>' + escapeHtml(c.plan_tomorrow || '无') + '</div></div>';
+        }
+        html += '</div>';
+        rowEl.insertAdjacentHTML('afterend', html);
+        expandIcon.className = 'bi bi-chevron-down';
+    } catch (e) {
+        rowEl.insertAdjacentHTML('afterend', '<div class="brf-detail-card text-danger small">加载失败: <a href="#" onclick="loadBrfDetail(\'' + escapeHtml(id) + '\',this.parentElement.previousElementSibling);return false;">[重试]</a></div>');
+        expandIcon.className = 'bi bi-chevron-right';
+    }
+}
+
+function initSSE() {
+    console.log('[SSE] 初始化 EventSource');
+    if (_sseReconnectTimer) {
+        clearInterval(_sseReconnectTimer);
+        _sseReconnectTimer = null;
+    }
+    if (_sseClient) {
+        _sseClient.close();
+    }
+    _sseClient = new EventSource('/api/v2/events');
+
+    _sseClient.addEventListener('memory_stream', function(e) {
+        _sseTrackEvent();
+        loadMemoryStream();
+    });
+    _sseClient.addEventListener('watchlist', function(e) {
+        _sseTrackEvent();
+        loadWatchlist();
+    });
+    _sseClient.addEventListener('task', function(e) {
+        _sseTrackEvent();
+        loadTaskProgress();
+    });
+    _sseClient.addEventListener('briefing', function(e) {
+        _sseTrackEvent();
+        if (state.brf._sseTimer) clearTimeout(state.brf._sseTimer);
+        state.brf._sseTimer = setTimeout(function() {
+            loadBrfToday();
+            var today = new Date().toISOString().slice(0, 10);
+            if (state.brf.latestDate && state.brf.latestDate < today) {
+                state.brf.statsCache = null;
+                loadBrfStats();
+                loadBrfHistory(1);
+            }
+        }, 500);
+    });
+    _sseClient.addEventListener('feedback', function(e) {
+        _sseTrackEvent();
+        loadManualSuggestions();
+    });
+
+    _sseClient.onerror = function(e) {
+        if (_sseClient.readyState === EventSource.CLOSED) {
+            _sseConsecutiveFailures++;
+            console.log('[SSE] onerror #' + _sseConsecutiveFailures + ' CLOSED');
+            if (_sseConsecutiveFailures >= _sseMaxFailures) {
+                _sseFallback('max-failures');
+            }
+        } else {
+            console.log('[SSE] onerror: readyState=' + _sseClient.readyState);
+        }
+    };
+    console.log('[SSE] EventSource已创建');
+}
+
+// 健康检查：每 15s 检测 EventSource 是否意外进入 CLOSED 状态
+// EventSource 被优雅关闭（非 error）时 onerror 不触发，此定时器兜底
+_sseHealthTimer = setInterval(function() {
+    var state = _sseClient ? _sseClient.readyState : -1;
+    if (_sseClient && state === EventSource.CLOSED) {
+        console.log('[SSE] 健康检查检测到 CLOSED 状态，触发降级');
+        _sseFallback('health-check');
+    } else if (_sseClient) {
+        var stateName = state === EventSource.CONNECTING ? 'CONNECTING' : (state === EventSource.OPEN ? 'OPEN' : 'CLOSED');
+        console.log('[SSE] 健康检查: readyState=' + stateName);
+    } else {
+        console.log('[SSE] 健康检查: _sseClient=null');
+    }
+}, 15000);
+
+// 空闲 60s 主动健康探测（v0.7.1 新增）
+setInterval(function() {
+    var idleSeconds = (Date.now() - _sseLastEventTime) / 1000;
+    if (idleSeconds > 60 && _sseClient && _sseClient.readyState === EventSource.OPEN) {
+        console.log('[SSE] 空闲 ' + idleSeconds.toFixed(0) + 's，主动健康探测');
+        fetch('/api/v2/sse-health').then(function(r) {
+            if (!r.ok) {
+                _sseConsecutiveFailures++;
+                console.log('[SSE] 健康探测失败#' + _sseConsecutiveFailures);
+                if (_sseConsecutiveFailures >= _sseMaxFailures) {
+                    _sseFallback('health-fail');
+                }
+            } else {
+                _sseConsecutiveFailures = 0;
+                console.log('[SSE] 健康探测通过');
+            }
+        }).catch(function() {
+            _sseConsecutiveFailures++;
+            if (_sseConsecutiveFailures >= _sseMaxFailures) {
+                _sseFallback('health-fail');
+            }
+        });
+    } else if (idleSeconds <= 60 && _sseClient) {
+        _sseConsecutiveFailures = 0;
+    }
+}, 30000);
+
+// 页面恢复可见时立即检查连接状态
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) {
+        console.log('[SSE] 页面恢复可见，检查连接状态');
+        if (_sseClient && _sseClient.readyState === EventSource.CLOSED) {
+            console.log('[SSE] visibilitychange 检测到 CLOSED，触发降级');
+            _sseFallback('visibility');
+        }
+    } else {
+        console.log('[SSE] 页面隐藏');
+    }
+});
+
+// ==== v0.7.1: hash 路由 ====
+
+function parseHash() {
+    var hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return { tab: null, sub: null };
+    var parts = hash.split('&');
+    var result = { tab: null, sub: null };
+    parts.forEach(function(p) {
+        var kv = p.split('=');
+        if (kv.length === 1 && kv[0]) {
+            result.tab = kv[0];
+        } else if (kv[0] === 'sub' && kv[1]) {
+            result.sub = kv[1];
+        }
+    });
+    return result;
+}
+
+var _subMap = {
+    // 总览
+    'daily-review': '#daily-review-panel',
+    'briefing': '#project-briefing-panel',
+    'task-progress': '#task-progress-panel',
+    // 对话
+    'conversation-list': '#conversation-panel',
+    'memory-stream': '#memory-stream-panel',
+    'monitor': '#monitor-panel',
+    // 记忆
+    'knowledge': '#knowledge-panel',
+    // 跟进
+    'todo': '#todo-panel',
+    'watchlist': '#watchlist-panel',
+    // 配置
+    'briefing-schedule': '#briefing-schedule-panel',
+    'user-suggestions': '#user-suggestions-panel',
+    'prompt-manager': '#prompts-panel',
+};
+
+function applyHash() {
+    var parsed = parseHash();
+    if (!parsed.tab) return;
+    // 一级 Tab 由 dashboard.html 的内联脚本处理，这里只处理二级面板
+    if (parsed.sub) {
+        var target = _subMap[parsed.sub];
+        if (target) {
+            var subBtn = document.querySelector('[data-bs-target="' + target + '"]');
+            if (subBtn) {
+                // 延迟执行让一级 Tab 先切换完成
+                setTimeout(function() {
+                    if (subBtn.classList.contains('active')) {
+                        var tab = document.querySelector(subBtn.getAttribute('data-bs-target'));
+                        if (tab && !tab.classList.contains('show')) {
+                            tab.classList.add('show', 'active');
+                        }
+                        subBtn.dispatchEvent(new Event('shown.bs.tab', {bubbles: true}));
+                    } else {
+                        bootstrap.Tab.getOrCreateInstance(subBtn).show();
+                    }
+                }, 50);
+            }
+        }
+    }
+}
+
+function adjustBrfListHeight() {
+    var header = document.querySelector('#brf-history-header');
+    var list = document.querySelector('#brf-history-list');
+    if (!header || !list) return;
+    var topOffset = header.getBoundingClientRect().bottom;
+    var available = window.innerHeight - topOffset - 40;
+    list.style.maxHeight = Math.max(200, available) + 'px';
+}
+window.addEventListener('resize', adjustBrfListHeight);
+
+// v0.7.1: hash 变化时应用二级面板
+window.addEventListener('hashchange', function() {
+    applyHash();
+});
+
+// 页面加载完成后初始化 SSE
+initSSE();
+
 init();
+
+// 初始化暂停推送开关
+fetchNoSuggestionsStatus();
+var _pauseToggle = document.getElementById('sug-pause-toggle');
+if (_pauseToggle) _pauseToggle.addEventListener('click', togglePause);
+
+// 初始化用户建议 Modal
+initManualSuggestionModal();
+
+// 简报端点选择器变更 -> 级联提示词下拉
+document.getElementById('brf-endpoint-select')?.addEventListener('change', cascadeBrfPrompt);

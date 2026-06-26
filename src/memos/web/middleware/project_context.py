@@ -1,13 +1,15 @@
 # src/memos/web/middleware/project_context.py
 from fastapi import Request
 
+from ...server.mcp import _project_id_ctx
 from ..utils import detect_project_id
 
 
 class ProjectContextMiddleware:
-    """ASGI middleware: extracts project_id from query params, injects into request.state.
+    """ASGI middleware: extracts project_id from query params, injects into request.state + _project_id_ctx.
 
     Priority chain: query param → CWD fallback
+    v0.7.1: 同步设置 _project_id_ctx，与 InjectProjectContextMiddleware (header 路径) 统一出口。
     """
 
     def __init__(self, app):
@@ -21,4 +23,5 @@ class ProjectContextMiddleware:
         request = Request(scope)
         pid = request.query_params.get("project_id") or detect_project_id()
         request.state.project_id = pid
+        _project_id_ctx.set(pid)
         await self.app(scope, receive, send)

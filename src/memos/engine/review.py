@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..config import config
 from ..config.models import _compute_default_project_id
-from .extractor import MemoryExtractor, _extract_llm_content, _strip_think_block, format_conversation
+from .extractor import MemoryExtractor, _estimate_tokens, _extract_llm_content, _strip_think_block, format_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,8 @@ def _query_conversations_by_date_range(
     }
     if project_id:
         where_clause["$and"].append({"project_id": project_id})
-    where_clause["$and"].append({"active": {"$ne": False}})
+    # F5: 使用 status 替代 active
+    where_clause["$and"].append({"status": {"$ne": "archived"}})
 
     raw = mem.store.get(where=where_clause, include=["documents", "metadatas"])
     ids_list = raw.get("ids") or []
@@ -267,8 +268,13 @@ def generate_daily_report(
     prompt_id: str | None = None,
     prompt_version: str | None = None,
     save_as_memory: bool = False,
+    start_ts: float | None = None,
+    end_ts: float | None = None,
 ) -> dict:
     """日报生成核心引擎——CLI 和 Dashboard API 共用。
+
+    Dashboard 路径：前端按浏览器时区计算 start_ts/end_ts 传入，后端直接使用。
+    CLI 路径：仍传 target_date 字符串，由 _resolve_date 按服务器本地时间解析。
 
     返回:
         {
@@ -283,16 +289,20 @@ def generate_daily_report(
             "message": str,              # 状态消息
         }
     """
-    # 1. 解析日期
-    try:
-        date_str, start_of_day, end_of_day = _resolve_date(target_date)
-    except ValueError:
-        return {
-            "report": None,
-            "date": target_date or "",
-            "conversation_count": 0,
-            "message": f"无效日期格式: {target_date}，请使用 YYYY-MM-DD",
-        }
+    # 1. 解析日期范围：优先使用前端传入的 UTC 时间戳，回退到 _resolve_date
+    if start_ts is not None and end_ts is not None:
+        date_str = target_date or datetime.now().strftime("%Y-%m-%d")
+        start_of_day, end_of_day = start_ts, end_ts
+    else:
+        try:
+            date_str, start_of_day, end_of_day = _resolve_date(target_date)
+        except ValueError:
+            return {
+                "report": None,
+                "date": target_date or "",
+                "conversation_count": 0,
+                "message": f"无效日期格式: {target_date}，请使用 YYYY-MM-DD",
+            }
 
     # 2. 查询对话记录
     records = _query_conversations_by_date_range(mem, start_of_day, end_of_day, project_id=project_id)
@@ -489,7 +499,7 @@ def generate_daily_report(
             "type": "daily_report",
             "project_id": save_pid,
             "project_name": Path.cwd().name,
-            "source": "daily_review",
+            "source": "auto_extracted",
             "report_date": date_str,
         }
         saved_id = mem.remember(report_text, metadata=meta)
@@ -563,7 +573,7 @@ def _token_aware_chunk(rounds: list[dict], max_tokens: int = 12000) -> list[list
     round_tokens = []
     for rnd in rounds:
         text = rnd.get("user_content", "") + rnd.get("assistant_content", "")
-        tokens = int(len(text) / config.buffer.token_ratio) if text else 0
+        tokens = _estimate_tokens(text) if text else 0
         round_tokens.append(max(tokens, 10))
 
     chunks = []

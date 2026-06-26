@@ -16,8 +16,8 @@ memos auth regen                   重新生成 Dashboard 访问 Token
 ## 服务
 
 ```
-memos server      启动 MCP Server（stdio 模式）
-memos dashboard   启动 Web 仪表板
+memos server      启动 MEMOS Server（unified 模式：FastAPI 统一服务，Dashboard + MCP + Hook 三合一）
+memos dashboard   启动 Web 仪表板（legacy 模式）
 ```
 
 ## 诊断
@@ -36,6 +36,36 @@ memos backup [--output-dir] [--project-id]        [待讨论] 创建全量备份
 memos restore <backup-dir> [--project-id]         [待讨论] 从备份恢复
 memos vacuum [--project-id]                       [待讨论] 回收 ChromaDB 磁盘空间
 memos reindex [--project-id]                      [待讨论] 强制重建 BM25 索引
+```
+
+## MCP 管理
+
+```
+memos mcp                 查看 MCP 子命令帮助
+memos mcp install         生成带 project_id 的 .mcp.json（SSE 模式）
+memos mcp install --server URL    指定 memos server 地址（默认 http://localhost:8000）
+```
+
+## 用户管理
+
+```
+memos user add <name>             创建用户并生成 Token
+memos user list                   列出所有用户
+memos user remove <name>          删除用户
+memos user token-regen <name>     重新生成 Token
+```
+
+## 认证
+
+```
+memos login --server URL --token TOKEN   保存凭据到本地
+memos logout                             清除本地凭据
+```
+
+## 模式迁移
+
+```
+memos migrate --to-unified   迁移到 unified 模式（备份配置和数据，设置 server.mode=unified）
 ```
 
 ## Hook 管理

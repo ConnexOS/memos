@@ -98,7 +98,8 @@ class UsageLogger:
             auto_memories = 0
             manual_memories = 0
             try:
-                and_clauses = [{"timestamp": {"$gte": since}}, {"active": {"$ne": False}}]
+                # F5: 使用 status 替代 active
+                and_clauses = [{"timestamp": {"$gte": since}}, {"status": {"$ne": "archived"}}]
                 if project_id:
                     and_clauses.append({"project_id": project_id})
                 all_records = memory.store.get(
@@ -109,10 +110,11 @@ class UsageLogger:
                     src = meta.get("source", "")
                     if src == "auto_extracted":
                         auto_memories += 1
-                    elif src in ("user_extracted", "user_appended", "user_instructed"):
+                    # F5: 新增 manual/watchlist_conversion 源
+                    elif src in ("user_extracted", "user_appended", "user_instructed", "manual", "watchlist_conversion"):
                         manual_memories += 1
             except Exception:
-                pass  # ChromaDB 查询失败时回退到事件计数
+                logger.debug("用量统计: ChromaDB 源统计查询失败，回退到事件计数", exc_info=True)
             if auto_memories == 0 and manual_memories == 0:
                 # 回退：ChromaDB 不支持 $gte 时用事件计数
                 auto_memories = sum(
@@ -150,7 +152,8 @@ class UsageLogger:
                 warn_end = expired_cutoff + warn_sec
                 # 已过期: timestamp < now - archive_days*86400
                 expired_records = memory.store.get(
-                    where={"$and": [{"timestamp": {"$lt": expired_cutoff}}, {"active": {"$ne": False}}]},
+                    # F5: 使用 status 替代 active
+                    where={"timestamp": {"$lt": expired_cutoff}, "status": "active"},
                     include=["metadatas"],
                 )
                 expired = len(expired_records.get("ids", []))
@@ -160,14 +163,14 @@ class UsageLogger:
                         "$and": [
                             {"timestamp": {"$gte": warn_start}},
                             {"timestamp": {"$lt": warn_end}},
-                            {"active": {"$ne": False}},
+                            {"status": "active"},
                         ]
                     },
                     include=["metadatas"],
                 )
                 expiring_soon = len(expiring_records.get("ids", []))
             except Exception:
-                pass
+                logger.debug("用量统计: ChromaDB 即将过期统计查询失败", exc_info=True)
 
         return {
             "period": period,

@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .models import (
+    _DEFAULT_BRIEFING_SYSTEM_PROMPT,
     _DEFAULT_CONFLICT_PROMPT,
     _DEFAULT_DAILY_REVIEW_PROMPT,
     _DEFAULT_PROMPT_FRAME,
@@ -275,9 +276,9 @@ class PromptManager(BaseModel):
         3. 同类型的 default 模板
         """
         # 延迟导入避免循环
-        from memos.config.loader import config as _cfg
+        from memos.config.loader import get_config as _get_cfg
 
-        for ep in _cfg.llm.endpoints:
+        for ep in _get_cfg().llm.endpoints:
             if ep.name == endpoint_name:
                 tid = ep.prompt_templates.get(template_type)
                 if tid:
@@ -312,9 +313,9 @@ class PromptManager(BaseModel):
         name = endpoint_name
         if name is None:
             try:
-                from memos.config.loader import config as _cfg
+                from memos.config.loader import get_config as _get_cfg
 
-                name = _cfg.llm.active
+                name = _get_cfg().llm.active
             except Exception:
                 name = "default"
         t = self.get_for_endpoint(name, template_type=template_type)
@@ -392,6 +393,7 @@ class PromptManager(BaseModel):
         new_defaults = [
             ("default@extract", "知识提炼 (v0.4.1)", "extract", _NEW_EXTRACT_SYSTEM_PROMPT),
             ("default@daily-review", "今日回顾 (默认)", "daily-review", _DEFAULT_DAILY_REVIEW_PROMPT),
+            ("default@briefing", "简报生成 (默认)", "briefing", _DEFAULT_BRIEFING_SYSTEM_PROMPT),
             ("default@conflict", "冲突检测", "conflict", _DEFAULT_CONFLICT_PROMPT),
             ("default@todo-extract", "待办提取 (v0.4.5)", "todo-extract", _DEFAULT_TODO_EXTRACT_PROMPT),
         ]
@@ -402,7 +404,13 @@ class PromptManager(BaseModel):
             elif tpl_id == "default@extract" and not self._is_user_customized(existing):
                 existing.draft.system_prompt = sys_prompt
                 existing.save_draft(system_prompt=sys_prompt)
+                self.save()
                 logger.info("已升级模板 %s 到 v0.4.1 新版 system_prompt", tpl_id)
+            elif tpl_id == "default@briefing" and "task_status" in existing.draft.system_prompt:
+                existing.draft.system_prompt = sys_prompt
+                existing.save_draft(system_prompt=sys_prompt)
+                self.save()
+                logger.info("已升级模板 %s 到 v0.7.1 新版 system_prompt", tpl_id)
 
     def save(self):
         """持久化：写 index.json + 各模板目录（含默认模板，修改后重启不丢失）"""

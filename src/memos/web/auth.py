@@ -38,9 +38,12 @@ def hash_token(token: str) -> str:
 
 
 def verify_token(token: str, token_hash: str) -> bool:
-    """用 bcrypt 验证 token 与已存储的哈希是否匹配"""
+    """验证 token 与已存储的哈希是否匹配（bcrypt + SHA256 兼容回退）"""
+    # 兼容旧版 SHA256 哈希（非 $2b$ 前缀）
+    if not token_hash.startswith("$2b$"):
+        import hashlib
+        return hashlib.sha256(token.encode()).hexdigest() == token_hash
     import bcrypt
-
     try:
         return bcrypt.checkpw(token.encode(), token_hash.encode())
     except Exception:

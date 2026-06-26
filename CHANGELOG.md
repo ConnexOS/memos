@@ -205,7 +205,7 @@
   - 建议卡片显示「已被提升 N 次」
 
 - **M6: 源码脱敏**
-  - `LLMEndpoint.api_base` 默认值：`192.168.8.12:8080` → `localhost:11434`
+  - `LLMEndpoint.api_base` 默认值：`<internal-server>:8080` → `localhost:11434`
   - 创建 `etc/config.example.json`（零真实凭据示例配置）
 
 - **M9: CLI 命令精简**

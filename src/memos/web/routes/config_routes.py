@@ -74,7 +74,7 @@ def update_config(request: Request, req: ConfigUpdateRequest):
 @router.post("/api/config/reload")
 def reload_config(request: Request):
     new_cfg = MemoConfig.reload()
-    for section_name in ("chroma", "model", "llm", "memory", "buffer", "dashboard", "server"):
+    for section_name in ("chroma", "model", "llm", "memory", "dashboard", "server"):
         section = getattr(config, section_name)
         new_section = getattr(new_cfg, section_name)
         for field_name in section.model_dump():

@@ -1,11 +1,9 @@
 import json
 import logging
-import multiprocessing
 import re
-import sys
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import requests
 
@@ -17,7 +15,6 @@ _usage_logger = None
 
 logger = logging.getLogger(__name__)
 
-_buf = config.buffer
 _llm = config.llm
 _mem = config.memory
 
@@ -51,10 +48,6 @@ def format_conversation(records: list[dict]) -> str:
     return "\n".join(parts)
 
 
-MAX_BUFFER_TOKENS = _buf.max_tokens
-TRUNCATE_TARGET_TOKENS = _buf.truncate_target
-TRIGGER_ROUNDS = _buf.trigger_rounds
-RATE_LIMIT_SECONDS = _buf.rate_limit_seconds
 LLM_URL = f"{_llm.api_base.rstrip('/')}/chat/completions"
 
 
@@ -69,7 +62,8 @@ def get_llm_api_key() -> str:
 
 
 def _estimate_tokens(text: str) -> int:
-    return int(len(text) / _buf.token_ratio) if text else 0
+    # 使用固定估算比例（6 字符约 1 token），无需 BufferConfig
+    return int(len(text) / 6) if text else 0
 
 
 def _extract_llm_content(resp_json: dict) -> str:
@@ -130,37 +124,6 @@ def _strip_think_block(text: str) -> str:
     return text.strip()
 
 
-def _extract_in_subprocess(buffer_text: str, config_dict: dict, collection_name: str, result_queue):
-    """子进程入口：独立加载 ChromaDB + 模型，执行提炼并写入。"""
-    try:
-        # 子进程内重新初始化 logging（fork 后 handler 可能失效）
-        logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-
-        # 重建配置
-        from ..config import MemoConfig
-
-        sub_cfg = MemoConfig.model_validate({k: v for k, v in config_dict.items() if k != "prompt"})
-        sub_cfg.prompt = None  # 子进程不需要 prompt 管理器
-
-        # 独立 ContextMemory
-        from .memory import ContextMemory
-
-        sub_mem = ContextMemory(collection_name=collection_name)
-
-        # 独立 Extractor
-        ext = MemoryExtractor(
-            llm_url=f"{sub_cfg.llm.api_base.rstrip('/')}/chat/completions",
-            api_key=sub_cfg.llm.api_key,
-            memory_system=sub_mem,
-            project_id=config_dict.get("_project_id"),
-            project_name=config_dict.get("_project_name"),
-        )
-        count = ext.extract_and_store(buffer_text)
-        result_queue.put({"status": "ok", "count": count})
-    except Exception as e:
-        result_queue.put({"status": "error", "message": str(e)})
-
-
 class MemoryExtractor:
     def __init__(
         self,
@@ -175,12 +138,7 @@ class MemoryExtractor:
         self.memory = memory_system
         self.project_id = project_id
         self.project_name = project_name or project_id
-        self.conversation_buffer: List[str] = []
-        self._last_extract_time: float = 0
         self._lock = threading.Lock()
-        self._pending_user_msg: Optional[str] = None
-        self._extracting: bool = False  # 异步提炼进行中标记
-        self._async_mode: bool = config.buffer.async_mode if hasattr(config.buffer, "async_mode") else True
 
     def _request_with_retry(self, payload: dict, max_retries: int = None, base_delay: float = None):
         if max_retries is None:
@@ -344,7 +302,7 @@ class MemoryExtractor:
 
         for mem in memories:
             content = mem.get("content")
-            mem_type = mem.get("type", "fact")
+            mem_type = mem.get("type", "solution")
             if not content:
                 continue
 
@@ -430,7 +388,7 @@ class MemoryExtractor:
                 }
             )
         except Exception:
-            pass  # 统计失败不影响提炼
+            logger.debug("统计记录失败，不影响提炼", exc_info=True)
 
     @staticmethod
     def _notify_extract_complete(count: int, memories: list = None):
@@ -461,7 +419,7 @@ class MemoryExtractor:
                 metadata={"extracted_count": count, "extracted_ids": extracted_ids, "previews": previews},
             )
         except Exception:
-            pass  # 通知失败不影响提炼
+            logger.debug("提炼完成通知推送失败，不影响提炼", exc_info=True)
 
     # v0.4.1: 冲突检测异步机制
     _conflict_semaphore = threading.Semaphore(3)  # 类变量：全局限制并发 LLM 冲突检测数，保护 API 资源
@@ -481,7 +439,7 @@ class MemoryExtractor:
                     new_content,
                     top_k=3,
                     project_id=self.project_id,
-                    where={"type": {"$in": ["fact", "decision", "preference"]}},
+                    where={"type": {"$in": ["solution", "decision", "lesson", "process"]}},
                 )
                 candidates = [
                     s
@@ -545,7 +503,7 @@ class MemoryExtractor:
                             },
                         )
                     except Exception:
-                        pass
+                        logger.debug("冲突通知推送失败", exc_info=True)
                     return
 
                 # Step 2: 调用 LLM 判断矛盾
@@ -575,18 +533,28 @@ class MemoryExtractor:
                 if model_name:
                     payload["model"] = model_name
 
-                headers = {"Content-Type": "application/json"}
-                if self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                resp = requests.post(self.llm_url, json=payload, headers=headers, timeout=config.llm.request_timeout)
-                if resp.status_code != 200:
-                    logger.warning("冲突检测 LLM 返回 %d", resp.status_code)
+                resp = self._request_with_retry(payload)
+                if resp is None:
+                    logger.warning("冲突检测 LLM 调用失败（已重试）")
                     return
 
                 result = resp.json()
                 raw_text = _extract_llm_content(result)
                 cleaned = _strip_think_block(raw_text)
-                parsed = json.loads(cleaned)
+                # 使用多级 JSON 回退（同 extract()）
+                try:
+                    parsed = json.loads(cleaned)
+                except (json.JSONDecodeError, ValueError):
+                    arr_match = re.search(r"\[[\s\S]*?\]", cleaned)
+                    if arr_match:
+                        try:
+                            parsed = json.loads(arr_match.group(0))
+                        except (json.JSONDecodeError, ValueError):
+                            logger.warning("冲突检测 JSON 解析失败（数组回退也无效）")
+                            return
+                    else:
+                        logger.warning("冲突检测 JSON 解析失败")
+                        return
 
                 if parsed.get("has_conflict"):
                     conflict_with = parsed.get("conflict_with", "")
@@ -644,7 +612,7 @@ class MemoryExtractor:
                             },
                         )
                     except Exception:
-                        pass
+                        logger.debug("冲突通知推送失败", exc_info=True)
             except Exception as e:
                 logger.warning("冲突检测失败（降级）: %s", e)
             finally:
@@ -652,28 +620,6 @@ class MemoryExtractor:
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
-
-    def _estimate_tokens(self, text: str) -> int:
-        return _estimate_tokens(text)
-
-    def _truncate_buffer(self):
-        merged = "\n".join(self.conversation_buffer)
-        if self._estimate_tokens(merged) > MAX_BUFFER_TOKENS:
-            # 从尾部向前保留，直到接近 TRUNCATE_TARGET_TOKENS
-            kept = []
-            total = self._estimate_tokens("[前面部分截断]\n")
-            for turn in reversed(self.conversation_buffer):
-                needed = self._estimate_tokens(turn + "\n")
-                if total + needed > TRUNCATE_TARGET_TOKENS:
-                    break
-                kept.append(turn)
-                total += needed
-            kept.reverse()
-            self.conversation_buffer = ["[前面部分截断]\n" + "\n".join(kept)] if kept else ["[前面部分截断]\n"]
-
-    def _can_extract(self) -> bool:
-        elapsed = time.time() - self._last_extract_time
-        return elapsed >= RATE_LIMIT_SECONDS
 
     def _persist_raw_conversation(self, user_msg: str, assistant_msg: str, scope: str = None, creator_id: str = None):
         """后台异步持久化原始对话。embedding 编码（~500ms）不阻塞 MCP 响应。"""
@@ -703,195 +649,4 @@ class MemoryExtractor:
         except Exception as e:
             logger.error("原始对话持久化失败: %s", e)
 
-    def append_conversation(self, role: str, content: str, scope: str = None, creator_id: str = None) -> bool:
-        """追加对话到缓冲区，满 TRIGGER_ROUNDS 条后在后台自动提炼。
-        返回 True 表示已触发提炼，False 表示仍在累积。
-
-        scope/creator_id: M6 数据隔离元数据，传入后附加到持久化记录。"""
-        turn = f"{role}: {content}"
-        merged = None
-        persist_pair = None  # (user_msg, assistant_msg, scope, creator_id) 在锁外持久化，避免阻塞
-        with self._lock:
-            self.conversation_buffer.append(turn)
-            self._truncate_buffer()
-
-            if role == "user":
-                self._pending_user_msg = content
-            elif role == "assistant" and self._pending_user_msg is not None:
-                persist_pair = (self._pending_user_msg, content, scope, creator_id)
-                self._pending_user_msg = None
-
-            if len(self.conversation_buffer) >= TRIGGER_ROUNDS and self._can_extract():
-                if self._extracting:
-                    # P0-1 修复: 上一次提炼尚未完成，保留缓冲区数据继续累积，避免数据丢失
-                    merged = None
-                else:
-                    self._last_extract_time = time.time()
-                    self._extracting = True  # 在锁内原子设置，消除 TOCTOU 竞态
-                    merged = "\n".join(self.conversation_buffer)
-                    self.conversation_buffer.clear()
-
-        # P0-5 修复: embedding + ChromaDB 写入在锁外执行，避免长时阻塞
-        if persist_pair is not None:
-            self._persist_raw_conversation(
-                persist_pair[0], persist_pair[1], scope=persist_pair[2], creator_id=persist_pair[3]
-            )
-
-        if merged is not None:
-            self._extract_in_background(merged)
-            return True
-        return False
-
-    def buffer_remember(self, text: str) -> bool:
-        """将 remember 内容追加到缓冲区，累积满后在后台自动提炼。
-        返回 True 表示已触发提炼，False 表示仍在累积。"""
-        turn = f"assistant: [记忆] {text}"
-        merged = None
-        with self._lock:
-            self.conversation_buffer.append(turn)
-            self._truncate_buffer()
-            if len(self.conversation_buffer) >= TRIGGER_ROUNDS and self._can_extract():
-                if self._extracting:
-                    # P0-1 修复: 上一次提炼尚未完成，保留缓冲区数据继续累积，避免数据丢失
-                    merged = None
-                else:
-                    self._last_extract_time = time.time()
-                    self._extracting = True  # 在锁内原子设置，消除 TOCTOU 竞态
-                    merged = "\n".join(self.conversation_buffer)
-                    self.conversation_buffer.clear()
-
-        if merged is not None:
-            self._extract_in_background(merged)
-            return True
-        return False
-
-    def _extract_in_background(self, merged: str):
-        """异步执行提炼。Windows 用子进程隔离 PyTorch，Linux/macOS 用线程。
-        P0-1 修复: _extracting 的检查和设置已由调用方在锁内原子完成，此方法不再检查。"""
-        if not self._async_mode:
-            # 同步模式（测试/调试用）
-            try:
-                count = self.extract_and_store(merged)
-                logger.info("提炼完成（同步），存入 %d 条记忆。", count)
-            except Exception as e:
-                logger.error("提炼失败: %s", e)
-            finally:
-                self._extracting = False
-            return
-
-        # v0.4.4 P0-2: 外层 try/except 确保启动失败时 _extracting 被重置
-        try:
-            if sys.platform == "win32":
-                self._extract_in_subprocess(merged)
-            else:
-                self._extract_in_thread(merged)
-        except Exception as e:
-            logger.error("异步提炼启动失败: %s", e)
-            self._extracting = False
-
-    def _extract_in_thread(self, merged: str):
-        """Linux/macOS 线程方案：直接在后台线程中执行提炼。
-        P0-1 修复: _extracting 已由调用方在锁内设为 True，此处不再重复设置。"""
-
-        def _run():
-            try:
-                count = self.extract_and_store(merged)
-                logger.info("提炼完成（线程），存入 %d 条记忆。", count)
-            except Exception as e:
-                logger.error("提炼失败（线程）: %s", e)
-            finally:
-                self._extracting = False
-
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
-
-    def _extract_in_subprocess(self, merged: str):
-        """Windows 子进程方案：独立进程加载 PyTorch + ChromaDB，结果写入 ChromaDB 后主进程可见。
-        P0-1 修复: _extracting 已由调用方在锁内设为 True，此处不再重复设置。"""
-
-        # 收集可序列化的配置
-        config_dict = {
-            "chroma": config.chroma.model_dump(),
-            "model": config.model.model_dump(),
-            "llm": config.llm.model_dump(),
-            "memory": config.memory.model_dump(),
-            "_project_id": self.project_id,
-            "_project_name": self.project_name,
-        }
-        collection_name = getattr(self.memory, "collection_name", None) or config.chroma.collection_name
-
-        ctx = multiprocessing.get_context("spawn")
-        result_queue = ctx.Queue()
-        process = ctx.Process(
-            target=_extract_in_subprocess,
-            args=(merged, config_dict, collection_name, result_queue),
-            daemon=True,
-        )
-        process.start()
-
-        # 启动后台线程等待子进程结果（不阻塞主线程）
-        def _wait_subprocess():
-            try:
-                process.join(timeout=config.buffer.subprocess_timeout)
-                if process.is_alive():
-                    logger.warning("子进程提炼超时 (%ds)，强制终止", config.buffer.subprocess_timeout)
-                    process.terminate()
-                    process.join(timeout=10)
-                else:
-                    # 读取结果
-                    try:
-                        result = result_queue.get(timeout=5)
-                        if result["status"] == "ok":
-                            logger.info("提炼完成（子进程），存入 %d 条记忆。", result["count"])
-                        else:
-                            logger.error("提炼失败（子进程）: %s", result["message"])
-                    except Exception:
-                        logger.info("子进程提炼完成（无明细）")
-            except Exception as e:
-                logger.error("等待子进程异常: %s", e)
-            finally:
-                self._extracting = False
-
-        threading.Thread(target=_wait_subprocess, daemon=True).start()
-
-    def force_extract(self) -> int:
-        with self._lock:
-            if not self.conversation_buffer:
-                return 0
-            merged = "\n".join(self.conversation_buffer)
-            self.conversation_buffer.clear()
-            self._last_extract_time = time.time()
-
-        count = self.extract_and_store(merged)
-        if count > 0:
-            return count
-        # 降级：LLM 提炼失败时，将原始对话内容直接写入知识库
-        logger.info("LLM 提炼返回空，降级为直接写入原始对话内容")
-        try:
-            from ..config.models import _compute_default_project_id
-
-            project_id = getattr(self, "_project_id", None) or _compute_default_project_id()
-            mid = self.memory.remember(
-                f"[原始对话记录]\n{merged}",
-                metadata={
-                    "type": "fact",
-                    "source": "auto_extracted",
-                    "project_id": project_id,
-                    "project_name": self.project_name,
-                    "note": "LLM 提炼失败降级，原始对话内容",
-                },
-            )
-            if mid:
-                self._log_usage(
-                    "extract_auto_success",
-                    config.llm.active_endpoint.name if config.llm.active_endpoint else "default",
-                    1,
-                    _estimate_tokens(merged),
-                    0,
-                    0,
-                )
-                self._notify_extract_complete(1)
-                return 1
-        except Exception as e:
-            logger.warning("降级写入也失败: %s", e)
-        return 0
+    # append_conversation() 和 buffer_remember() 已随 v0.6.0 移除

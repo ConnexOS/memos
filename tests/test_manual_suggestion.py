@@ -1,4 +1,4 @@
-"""管道三手工建议 —— 12+ 测试用例 (v0.4.4 增强版 Phase 3)"""
+"""管道三用户建议 —— 12+ 测试用例 (v0.4.4 增强版 Phase 3)"""
 
 import json
 import time
@@ -19,7 +19,7 @@ def _make_manual_suggestion(
     priority="medium",
     created_by="user",
 ):
-    """创建一条手工建议的 mock 存储数据。"""
+    """创建一条用户建议的 mock 存储数据。"""
     if keywords is None:
         keywords = ["重构", "新框架"]
     return {
@@ -42,7 +42,7 @@ def _make_manual_suggestion(
 
 
 def _make_mem_with_suggestions(suggestions):
-    """创建包含手工建议的 mock memory。"""
+    """创建包含用户建议的 mock memory。"""
     mem = mock.Mock()
     store = mock.Mock()
     ids = [s["id"] for s in suggestions]
@@ -108,7 +108,7 @@ class TestMatchManualSuggestions:
         assert len(result) == 1
 
     def test_expired_suggestion_skipped(self):
-        """过期手工建议不触发。"""
+        """过期用户建议不触发。"""
         now = time.time()
         sug = _make_manual_suggestion(
             keywords=["重构"], expires_at=now - 86400,  # 1 天前过期

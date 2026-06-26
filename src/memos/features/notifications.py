@@ -134,25 +134,24 @@ class NotificationLogger:
 
         Returns: (records, total_count)
         """
-        all_records = self._read_all()
-        # 按时间倒序
-        all_records.sort(key=lambda r: r.get("timestamp", 0), reverse=True)
-
-        # 清理过期通知（>retention_days 的已读通知）
         from ..config import config
 
         retention_days = config.notification.retention_days if hasattr(config, "notification") else 30
         cutoff = time.time() - retention_days * 86400
-        valid_records = []
-        cleaned = 0
-        for rec in all_records:
-            if rec.get("read") and rec.get("timestamp", 0) < cutoff:
-                cleaned += 1
-                continue
-            valid_records.append(rec)
 
-        if cleaned > 0:
-            self._write_all(valid_records)
+        # TOCTOU 修复：过期清理在锁保护下执行，防止与 _update_field 并发
+        with self._lock:
+            all_records = self._read_all()
+            all_records.sort(key=lambda r: r.get("timestamp", 0), reverse=True)
+            valid_records = []
+            cleaned = 0
+            for rec in all_records:
+                if rec.get("read") and rec.get("timestamp", 0) < cutoff:
+                    cleaned += 1
+                    continue
+                valid_records.append(rec)
+            if cleaned > 0:
+                self._write_all(valid_records)
 
         # 过滤
         filtered = []

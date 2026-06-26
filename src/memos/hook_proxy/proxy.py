@@ -56,7 +56,7 @@ def _resolve_server_url(args_server: str | None) -> str:
             logger.debug("server URL from etc/config.json port: %s", _proxy_url)
             return _proxy_url
     except Exception:
-        pass
+        logger.debug("从 config.json 读取 server URL 失败", exc_info=True)
     try:
         from ..config import config
 
@@ -65,7 +65,7 @@ def _resolve_server_url(args_server: str | None) -> str:
         logger.debug("server URL from MemoConfig port: %s", url)
         return url
     except Exception:
-        pass
+        logger.debug("从 MemoConfig 读取 server URL 失败", exc_info=True)
     logger.info("server URL 使用默认值: http://127.0.0.1:8000")
     return "http://127.0.0.1:8000"
 

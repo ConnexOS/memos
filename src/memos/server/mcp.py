@@ -26,7 +26,6 @@ _PID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 _id_len = config.server.id_length
 _trunc = config.server.response_truncate_length
 _top_k_max = config.server.mcp_top_k_max
-_trigger_rounds = config.buffer.trigger_rounds
 
 _default_project_id = hashlib.md5(str(Path.cwd()).encode()).hexdigest()[:_id_len]
 _default_project_name = Path.cwd().name
@@ -244,32 +243,39 @@ ALLOWED_METADATA_KEYS = {
 
 @mcp.tool()
 def remember(text: str, metadata: dict = None) -> str:
-    """追加到缓冲区，累积后自动提炼为知识。直写请用 save_knowledge。
+    """标记待关注，写入 ChromaDB type=watchlist，供 L5 待关注面板展示。
 
-    支持 7 种知识类型（metadata.type）：fact/decision/preference/bug_fix/feature_design/code_optimize/tech_knowledge。
-    待办请用 create_todo 工具。
+    可通过 L5 Dashboard 将待关注内容转为知识/忽略/备注。
     """
     if len(text) > MAX_INPUT_LENGTH:
         return f"文本过长（{len(text)} 字符，上限 {MAX_INPUT_LENGTH}），请精简后重试。"
+
+    watchlist_meta = {
+        "type": "watchlist",
+        "user_intent": "待关注",
+        "created_at": time.time(),
+        "processed": False,
+        "project_id": _get_project_id(),
+        "project_name": _get_project_name(_get_project_id()),
+        "source": "remember",
+    }
     if metadata:
-        orig_keys = set(metadata.keys())
-        metadata = {k: v for k, v in metadata.items() if k in ALLOWED_METADATA_KEYS}
-        dropped = orig_keys - set(metadata.keys())
-        if dropped:
-            logger.debug("remember 过滤非法 metadata key: %s", dropped)
-        # v0.4.8: type=todo 告警，引导使用 create_todo
-        if metadata.get("type") == "todo":
-            logger.warning("remember 收到 type=todo，建议改用 create_todo 工具创建待办")
-    if metadata is None:
-        metadata = {}
-    metadata.setdefault("scope", "team")
-    metadata["creator_id"] = _resolve_creator_id(from_ctx=True)
-    ext = _get_extractor()
-    triggered = ext.buffer_remember(text)
-    if triggered:
-        return "已触发后台自动提炼，提炼完成后存入知识库。"
-    buf_size = len(ext.conversation_buffer)
-    return f"已追加到记忆缓冲区。缓冲区现有 {buf_size} 条，满 {_trigger_rounds} 条后自动提炼入库。"
+        for k, v in metadata.items():
+            if k not in ("type", "created_at", "processed", "user_intent"):
+                watchlist_meta[k] = v
+
+    mem = _get_memory()
+    mid = mem.remember(text, metadata=watchlist_meta)
+    if mid:
+        # F9: SSE 事件总线通知
+        try:
+            from ..features.event_bus import touch_event as _touch
+
+            _touch("watchlist")
+        except Exception:
+            logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
+        return json.dumps({"id": mid, "status": "watchlist"}, ensure_ascii=False)
+    return "保存失败"
 
 
 @mcp.tool()
@@ -282,17 +288,19 @@ def recall(
     hybrid: bool = False,
     bm25_weight: float = 0.7,
 ) -> str:
-    """语义检索相关记忆，支持类型/时间过滤和混合检索(BM25+向量)。
+    """语义检索相关记忆，支持类型/时间过滤和混合检索（BM25+向量）。
 
-    支持 7 种知识类型过滤：fact/decision/preference/bug_fix/feature_design/code_optimize/tech_knowledge"""
+    支持 6 种类型过滤：task/briefing/solution/decision/lesson/process
+    watchlist 不参与语义检索。"""
     if len(query) > MAX_INPUT_LENGTH:
         return "查询文本过长，请精简后重试。"
     pid = _resolve_pid(project_id_override)
-    knowledge_types = list(_VALID_KNOWLEDGE_TYPES)
+    if type_filter and type_filter not in _VALID_RECALL_TYPES:
+        return f"无效 type_filter '{type_filter}'，有效值：task/briefing/solution/decision/lesson/process"
     if type_filter:
-        where = {"type": type_filter} if type_filter in knowledge_types else {"type": {"$in": knowledge_types}}
+        where = {"type": type_filter}
     else:
-        where = {"type": {"$in": knowledge_types}}
+        where = {"type": {"$in": list(_VALID_RECALL_TYPES)}}
     try:
         _creator_id = _resolve_creator_id(from_ctx=True)
         _scope = _creator_id not in ("", "unknown")
@@ -323,7 +331,7 @@ def list_memories(
     project_id_override: str = None,
     exclude_types: list[str] = None,
 ) -> str:
-    """列出当前项目的所有记忆（分页），默认排除 todo 类型（待办请用 list_todos）。支持 7 种知识类型：fact/decision/preference/bug_fix/feature_design/code_optimize/tech_knowledge。
+    """列出当前项目的所有记忆（分页），默认排除 todo 类型（待办请用 list_todos）。v0.7.0 新 6 类体系：task/briefing/solution/decision/lesson/process，向后兼容旧 7 类查询。
 
     参数：
       type_filter: 按类型过滤（可选，不指定则列出所有非排除类型）
@@ -332,12 +340,11 @@ def list_memories(
     pid = _resolve_pid(project_id_override)
     if exclude_types is None:
         exclude_types = ["todo"]
-    # v0.4.8 P3-1: type_filter=todo 与默认 exclude_types=["todo"] 冲突，自动覆写
     if type_filter == "todo" and exclude_types == ["todo"]:
         logger.warning("list_memories type_filter=todo 与默认 exclude_types=['todo'] 冲突，已自动清除排除列表")
         exclude_types = []
     if type_filter is None:
-        type_filter = list(_VALID_KNOWLEDGE_TYPES)
+        type_filter = list(_VALID_RECALL_TYPES)
     _creator_id = _resolve_creator_id(from_ctx=True)
     _scope = _creator_id not in ("", "unknown")
     items = _get_memory().list_memories(
@@ -377,32 +384,18 @@ def set_project_id(pid: str, project_name: str = None) -> str:
     return f"项目 ID 已设置为: {pid}"
 
 
-@mcp.tool()
-def log_complete_turn(user_message: str, assistant_message: str) -> str:
-    """记录一轮完整对话（用户消息+助手回复），累积多轮后自动提炼"""
-    if len(user_message) > MAX_INPUT_LENGTH or len(assistant_message) > MAX_INPUT_LENGTH:
-        return f"消息文本过长（上限 {MAX_INPUT_LENGTH} 字符），请精简后重试。"
-    _get_extractor().append_conversation(
-        "user", user_message, scope="personal", creator_id=_resolve_creator_id(from_ctx=True)
-    )
-    _get_extractor().append_conversation(
-        "assistant", assistant_message, scope="personal", creator_id=_resolve_creator_id(from_ctx=True)
-    )
-    buf_size = len(_get_extractor().conversation_buffer)
-    return f"已记录本轮对话。缓冲区现有 {buf_size} 轮，满 {_trigger_rounds} 轮后自动提炼。"
-
-
-# 知识类型常量（共 7 种，A+B 管线 3 种 + D 管线 4 种）
+# v0.6.0 知识类型常量 —— 仅 L3 四类（Claude Code 可写范围）
 _VALID_KNOWLEDGE_TYPES = {
-    "fact",
+    "solution",
     "decision",
-    "preference",  # A+B 管线
-    "bug_fix",
-    "feature_design",
-    "code_optimize",
-    "tech_knowledge",  # D 管线
+    "lesson",
+    "process",
 }
-# todo 由独立 create_todo/list_todos/update_todo 管理
+
+# recall 可查询类型范围（新 6 类）
+_VALID_RECALL_TYPES = {
+    "task", "briefing", "solution", "decision", "lesson", "process",
+}
 
 _MANUAL_SUGGESTION_ALLOWED_KEYS = {
     "trigger_keywords",
@@ -414,26 +407,31 @@ _MANUAL_SUGGESTION_ALLOWED_KEYS = {
 
 
 @mcp.tool()
-def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
+def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
     """直接保存知识到知识库（路径 B），由用户明确指令触发。
 
-    路径 B 支持 7 种知识类型：fact/decision/preference（A+B 管线），bug_fix/feature_design/code_optimize/tech_knowledge（D 管线）。
-    待办请用 create_todo，手工建议请用 Dashboard 管理面板。
-    manual_suggestion 类型需要 metadata 中包含 trigger_keywords（list[str]）。
-    manual_suggestion 可选 metadata：cooldown_minutes（推送间隔，默认 60），validity_minutes（有效期，0=永不过期）。
+    支持 4 种类型：solution/decision/lesson/process。
+    待办请用 create_todo 工具。
     """
     if len(text) > MAX_INPUT_LENGTH:
         return f"文本过长（{len(text)} 字符，上限 {MAX_INPUT_LENGTH}），请精简后重试。"
-    if type == "todo":
-        return "type='todo' 已不支持，请使用 create_todo 工具创建待办。"
-    if type not in _VALID_KNOWLEDGE_TYPES and type != "manual_suggestion":
-        return f"无效类型 '{type}'，支持 7 种知识类型：{', '.join(sorted(_VALID_KNOWLEDGE_TYPES))}，手工建议请用 manual_suggestion"
 
-    if type == "manual_suggestion":
+    # type 可选：不传则由 Claude 自行决定，默认 fallback 到 "solution"
+    effective_type = type or "solution"
+
+    # manual_suggestion 不走知识类型校验（触发 _save_manual_suggestion）
+    if effective_type == "manual_suggestion":
         return _save_manual_suggestion(text, metadata or {})
 
+    if effective_type not in _VALID_KNOWLEDGE_TYPES:
+        return (
+            f"无效类型 '{effective_type}'，v0.6.0 支持 4 种类型："
+            f"{', '.join(sorted(_VALID_KNOWLEDGE_TYPES))}。"
+            f"task/briefing 属于系统类型，由 MEMOS LLM 写入。"
+        )
+
     meta = {
-        "type": type,
+        "type": effective_type,
         "project_id": _get_project_id(),
         "project_name": _get_project_name(_get_project_id()),
         "source": "user_instructed",
@@ -449,7 +447,7 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
     # v0.4.1: 写入前去重，用户直写评分1.0优先覆盖
     dedup_failed = False
     try:
-        similar = mem.recall_with_scores(text, project_id=pid, where={"type": type})
+        similar = mem.recall_with_scores(text, project_id=pid, where={"type": effective_type})
     except ChromaDBError as e:
         logger.error("save_knowledge 去重查询因数据库异常失败，降级为直接写入: %s", e)
         dedup_failed = True
@@ -493,6 +491,18 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
         if config.memory.conflict_detection_enabled:
             ext = _get_extractor()
             ext._detect_conflicts_async(text, overwritten)
+        # F7 活动日志埋点（非阻塞）
+        try:
+            from ..features.activity_log import log_knowledge_write as _log_kw
+            _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "overwrite"}, project_id=_get_project_id())
+        except Exception:
+            logger.debug("save_knowledge 活动日志埋点(覆盖)失败", exc_info=True)
+        # F9: SSE 事件总线通知
+        try:
+            from ..features.event_bus import touch_event as _touch
+            _touch("memory_stream")
+        except Exception:
+            logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
         return f"已覆盖旧知识 (id: {overwritten[:_id_len]}...)"
     else:
         mid = mem.remember(text, metadata=meta)
@@ -500,6 +510,18 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
             if config.memory.conflict_detection_enabled:
                 ext = _get_extractor()
                 ext._detect_conflicts_async(text, mid)
+            # F7 活动日志埋点（非阻塞）
+            try:
+                from ..features.activity_log import log_knowledge_write as _log_kw
+                _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "create"}, project_id=_get_project_id())
+            except Exception:
+                logger.debug("save_knowledge 活动日志埋点(创建)失败", exc_info=True)
+            # F9: SSE 事件总线通知
+            try:
+                from ..features.event_bus import touch_event as _touch
+                _touch("memory_stream")
+            except Exception:
+                logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
             msg = f"已直接保存知识到知识库 (id: {mid[:_id_len]}...)"
             if dedup_failed:
                 msg += "（数据库异常，去重检查未完成，建议运行 memos doctor 诊断）"
@@ -508,7 +530,7 @@ def save_knowledge(text: str, type: str = "fact", metadata: dict = None) -> str:
 
 
 def _save_manual_suggestion(text: str, metadata: dict) -> str:
-    """保存手工建议。"""
+    """保存用户建议。"""
     trigger_keywords = metadata.get("trigger_keywords", [])
     if not isinstance(trigger_keywords, list) or not trigger_keywords:
         return "manual_suggestion 类型需要 metadata.trigger_keywords 为非空 list[str]"
@@ -559,13 +581,18 @@ def _save_manual_suggestion(text: str, metadata: dict) -> str:
     mem = _get_memory()
     mid = mem.remember(text, metadata=meta)
     if mid:
-        return f"已保存手工建议 (id: {mid[:_id_len]}...)，下次命中关键词时将触发推送"
+        return f"已保存用户建议 (id: {mid[:_id_len]}...)，下次命中关键词时将触发推送"
     return "保存失败"
 
 
 @mcp.tool()
 def update_memory(memory_id: str, text: str = None, metadata: dict = None) -> str:
-    """更新记忆内容和/或元数据。仅可更新当前项目下的记忆。metadata 采用合并更新策略。"""
+    """更新记忆内容和/或元数据。仅可更新当前项目下的记忆。metadata 采用合并更新策略。
+
+    支持通过 metadata 中的 status 字段变更记忆状态流转：active ↔ forgotten/archived。
+    注意：状态变更建议使用专用 MCP 工具或 API 端点（forget/restore/archive），
+    直接修改 status 字段不会自动记录 inactive_reason 或 forgotten_at 时间戳。
+    """
     # P3-3: 空 memory_id 前端校验
     if not memory_id or not memory_id.strip():
         return "参数错误: memory_id 不能为空"
@@ -612,14 +639,6 @@ def delete_memory(memory_id: str) -> str:
         return f"删除失败: {e}"
 
 
-@mcp.tool()
-def force_extract() -> str:
-    """强制立即提炼缓冲区中的所有内容，返回提炼出的记忆条数。P0-3: 注册为 MCP 工具供 AI 助手调用。"""
-    ext = _get_extractor()
-    count = ext.force_extract()
-    return f"强制提炼完成，共提取 {count} 条记忆。"
-
-
 # ==== v0.4.5 R2 / v0.4.8: 待办 MCP 工具 ====
 
 _TODO_STATUS_VALUES = {"pending", "in_progress", "completed", "cancelled"}
@@ -636,7 +655,7 @@ _PRIORITY_VALUES = {"high", "medium", "low"}
 
 @mcp.tool()
 def create_todo(content: str, priority: str = "medium", due_date: str = "") -> str:
-    """创建待办，写入完整 metadata（含 todo_status/pending/priority/active），返回 JSON 格式。
+    """创建待办，写入完整 metadata（含 todo_status/pending/priority/status），返回 JSON 格式。
 
     参数：
       content (必填): 待办内容
@@ -655,7 +674,7 @@ def create_todo(content: str, priority: str = "medium", due_date: str = "") -> s
         "type": "todo",
         "todo_status": "pending",
         "priority": priority,
-        "active": True,
+        "status": "active",
         "project_id": _get_project_id(),
         "project_name": _get_project_name(_get_project_id()),
         "source": "mcp",
@@ -677,7 +696,7 @@ def create_todo(content: str, priority: str = "medium", due_date: str = "") -> s
 
 
 @mcp.tool()
-def list_todos(todo_status: str = "pending", limit: int = 10, project_id_override: str = None) -> str:
+def list_todos(todo_status: str = "pending", limit: int = 10, project_id_override: str = "") -> str:
     """查询待办列表（独立实现），按 todo_status 过滤，返回 JSON 格式。"""
     if todo_status and todo_status not in _TODO_STATUS_VALUES:
         return f"无效 todo_status: {todo_status}，可选: {', '.join(sorted(_TODO_STATUS_VALUES))}"

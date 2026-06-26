@@ -149,67 +149,11 @@ class TestHookModules:
     def test_prompt_pipeline_functions_importable(self):
         """prompt hook 的核心管道函数可正常导入。"""
         from memos.hooks.prompt import (
-            run_pipeline_1, run_pipeline_2, run_pipeline_3,
+            run_manual_suggestion_matching,
             _build_layered_context,
         )
 
-        assert callable(run_pipeline_1)
-        assert callable(run_pipeline_2)
-        assert callable(run_pipeline_3)
+        assert callable(run_manual_suggestion_matching)
         assert callable(_build_layered_context)
 
 
-class TestFifoCleanup:
-    """T7: FIFO 清理 — 已反馈建议不参与清理。"""
-
-    def test_fifo_skips_reacted(self):
-        """FIFO 清理仅淘汰 pending，reacted 记录不变。"""
-        from unittest import mock
-
-        from memos.hooks.prompt import _fifo_cleanup
-
-        mem = mock.MagicMock()
-        cfg = mock.MagicMock()
-        cfg.suggestion_max_pending = 3
-
-        # 4 条 pending → 超过 max_pending=3，触发清理
-        mem.store.count.return_value = 4
-        mem.store.get.return_value = {
-            "ids": [
-                "pending-1", "pending-2", "pending-3", "pending-4",
-            ],
-            "metadatas": [
-                {"status": "pending", "suggestion_type": "active_push", "type": "suggestion", "project_id": "default"},
-                {"status": "pending", "suggestion_type": "active_push", "type": "suggestion", "project_id": "default"},
-                {"status": "pending", "suggestion_type": "active_push", "type": "suggestion", "project_id": "default"},
-                {"status": "pending", "suggestion_type": "active_push", "type": "suggestion", "project_id": "default"},
-            ],
-        }
-
-        _fifo_cleanup(mem, "default", cfg)
-
-        # 验证只清理了 2 条（4 - 3 + 1 = 2），且全部被标记为 dismissed
-        update_call = mem.store.update.call_args
-        assert update_call is not None
-        dismissed_ids = update_call[1]["ids"]
-        dismissed_metas = update_call[1]["metadatas"]
-        assert len(dismissed_ids) == 2
-        assert all(m["status"] == "dismissed" for m in dismissed_metas)
-
-    def test_fifo_reacted_untouched(self):
-        """有 reacted 记录时，FIFO 计数不受影响（仅统计 pending）。"""
-        from unittest import mock
-
-        from memos.hooks.prompt import _fifo_cleanup
-
-        mem = mock.MagicMock()
-        cfg = mock.MagicMock()
-        cfg.suggestion_max_pending = 3
-
-        # 2 条 pending + 5 条 reacted → pending=2 < max_pending=3 → 不触发清理
-        mem.store.count.return_value = 2  # 仅统计 pending
-
-        _fifo_cleanup(mem, "default", cfg)
-
-        # 不触发清理 → store.update 不被调用
-        assert not mem.store.update.called

@@ -105,7 +105,7 @@ def list_conflicts(request: Request, limit: int = 50, project_id: str = Depends(
                             )
                             logger.info("自清理孤立冲突记忆: %s (对方已删除)", orphan_id[:8])
                         except Exception:
-                            pass
+                            logger.debug("自清理孤立冲突记忆失败（existing_memory）", exc_info=True)
                     elif pair.get("new_memory"):
                         orphan_id = pair["new_memory"]["id"]
                         try:
@@ -115,7 +115,7 @@ def list_conflicts(request: Request, limit: int = 50, project_id: str = Depends(
                             )
                             logger.info("自清理孤立冲突记忆: %s (对方已删除)", orphan_id[:8])
                         except Exception:
-                            pass
+                            logger.debug("自清理孤立冲突记忆失败（new_memory）", exc_info=True)
             except Exception:
                 logger.warning("无法获取冲突对方记忆: %s", missing_id[:8])
 
@@ -459,7 +459,7 @@ def extract_todos_from_review(request: Request, body: dict, project_id: str = De
                 "priority": priority,
                 "context": context,
                 "source_date": date,
-                "source": "review_extracted",
+                "source": "auto_extracted",
                 "project_id": project_id,
                 "project_name": pname,
                 "status_history": _json.dumps([]),
@@ -535,20 +535,19 @@ def delete_project(project_id: str, request: Request):
     """删除指定项目的全部数据。幂等——项目已空或不存在也返回成功。"""
     mem = request.app.state.context_memory
     try:
-        # 先查出该项目全部 ID
-        existing = mem.store.get(where={"project_id": project_id}, include=["metadatas"])
-        ids = existing.get("ids", []) if existing else []
-        if len(ids) > 20000:
-            logger.warning("项目 %s 包含 %d 条记录，数量较大", project_id, len(ids))
-        if ids:
-            # 分批删除
-            batch_size = 500
-            for i in range(0, len(ids), batch_size):
-                batch = ids[i : i + batch_size]
-                mem.store.delete(batch)
+        # 分批查询+删除，避免全量加载 ID 到内存导致 OOM
+        batch_size = 500
+        deleted_count = 0
+        while True:
+            batch = mem.store.get(where={"project_id": project_id}, limit=batch_size, include=["metadatas"])
+            batch_ids = batch.get("ids", []) if batch else []
+            if not batch_ids:
+                break
+            mem.store.delete(batch_ids)
+            deleted_count += len(batch_ids)
         _invalidate_projects_cache()
-        logger.info("项目 %s 已删除，清除 %d 条记录", project_id, len(ids))
-        return {"deleted": True, "count": len(ids)}
+        logger.info("项目 %s 已删除，清除 %d 条记录", project_id, deleted_count)
+        return {"deleted": True, "count": deleted_count}
     except Exception as e:
         logger.error("删除项目 %s 失败: %s", project_id, e)
         raise HTTPException(500, f"删除失败: {e}")
@@ -582,6 +581,16 @@ async def system_status(request: Request):
         "db_size_mb": db_size_mb,
         "vector_dim": config.model.vector_dim,
         "model_name": config.model.name,
+        "active_endpoint": config.llm.active,
+    }
+
+
+@router.get("/api/v2/llm/ping")
+async def llm_ping(request: Request):
+    """轻量 LLM 探活，仅返回在线状态和端点名。"""
+    llama_ok = await _get_llama_status()
+    return {
+        "llama_server_ok": llama_ok,
         "active_endpoint": config.llm.active,
     }
 

@@ -205,7 +205,7 @@ class TestTokenAwareChunk:
                 len(r.get("user_content", "") + r.get("assistant_content", ""))
                 for r in chunk
             )
-            total_tokens = int(total_chars / 0.75)
+            total_tokens = int(total_chars / 6)
             assert total_tokens <= 12000, f"batch tokens ({total_tokens}) exceed limit"
 
         total_rounds = sum(len(c) for c in chunks)
@@ -280,7 +280,7 @@ class TestSingleRoundOverflow:
     def test_single_round_exceeds_limit(self):
         """单轮超过 max_tokens 时单独成批"""
         rounds = [{
-            "user_content": "x" * 10000,
+            "user_content": "x" * 35000,
             "assistant_content": "",
             "timestamp": 0.0,
         }]
@@ -306,7 +306,7 @@ class TestSingleRoundOverflow:
         rounds = []
         for i in range(5):
             rounds.append({
-                "user_content": "x" * 10000,
+                "user_content": "x" * 35000,
                 "assistant_content": "",
                 "timestamp": float(i),
             })
@@ -436,7 +436,7 @@ class TestHierarchicalSummarize:
         assert result == ""
 
     def test_hierarchical_in_generate_report(self):
-        from memos.engine.review import generate_daily_report
+        from memos.engine.review import generate_daily_report, DailyReviewStrategy
 
         raw_records = []
         for i in range(2000):
@@ -467,9 +467,18 @@ class TestHierarchicalSummarize:
                 mock_resp.json.return_value = {"choices": [{"message": {"content": "# daily report\n\ncontent"}}]}
                 mock_post.return_value = mock_resp
 
-                result = generate_daily_report(
-                    mock.Mock(), target_date="2026-05-27",
-                )
+                mock_llm = mock.Mock()
+                mock_llm.active = "test-ep"
+                mock_llm.api_key = ""
+                mock_ep = mock.Mock()
+                mock_ep.name = "test-ep"
+                mock_ep.api_base = "http://test/v1"
+                mock_ep.api_key = ""
+                mock_llm.endpoints = [mock_ep]
+                with mock.patch("memos.engine.review.config.llm", mock_llm):
+                    result = generate_daily_report(
+                        mock.Mock(), target_date="2026-05-27",
+                    )
 
         assert result["strategy"] == "hierarchical", f"expected hierarchical, got {result['strategy']}"
 

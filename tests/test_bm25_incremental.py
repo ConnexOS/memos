@@ -12,7 +12,7 @@ class _BM25Store:
 
     def __init__(self, docs=None):
         self._docs = list(docs or [])
-        self._metas = [{"active": True, "timestamp": 1_700_000_000 - i * 3600} for i in range(len(self._docs))]
+        self._metas = [{"status": "active", "timestamp": 1_700_000_000 - i * 3600} for i in range(len(self._docs))]
 
     def get(self, where=None, limit=None, offset=None, include=None, ids=None):
         if ids is not None:

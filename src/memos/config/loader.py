@@ -3,32 +3,33 @@
 从 config.py 拆分（v0.4.3 架构重整 Phase 6）。
 """
 
+import hashlib
 import json
 import logging
 import os
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from memos._version import __version__
 from memos.errors import ConfigCorruptedError
 
 from .models import (
+    ActivityLogConfig,
     AgentConfig,
     AuthConfig,
     BackupConfig,
-    BufferConfig,
     ChromaConfig,
     DashboardConfig,
     HookProxyConfig,
     LLMConfig,
     MemoryConfig,
+    MemoryTypesConfig,
     ModelConfig,
     NotificationConfig,
     ServerConfig,
     SuggestionConfig,
-    SystemSuggestionConfig,
     get_memos_home,
 )
 from .prompts import PromptManager
@@ -44,16 +45,32 @@ def _get_schema_path() -> Path:
     return get_memos_home() / "etc" / "config.schema.json"
 
 
+def _schema_model_hash() -> str:
+    """计算当前模型定义的 MD5 哈希，作为 schema 缓存版本标识。
+
+    当 Pydantic 模型字段变更时哈希自动变化，避免新增字段后缓存未刷新。
+    """
+    h = hashlib.md5()
+    for cls in [
+        ChromaConfig, ModelConfig, LLMConfig, MemoryConfig, SuggestionConfig,
+        DashboardConfig, ServerConfig, AuthConfig, BackupConfig, NotificationConfig,
+        AgentConfig, HookProxyConfig, MemoryTypesConfig, ActivityLogConfig,
+    ]:
+        h.update(json.dumps(cls.model_json_schema(), sort_keys=True).encode())
+    return h.hexdigest()[:12]
+
+
 def get_config_schema(force_refresh: bool = False) -> dict:
     """获取 MemoConfig 的 JSON Schema，首次生成后缓存到 etc/config.schema.json。"""
     schema_path = _get_schema_path()
+    model_hash = _schema_model_hash()
     if not force_refresh and schema_path.exists():
         with open(schema_path, encoding="utf-8") as f:
             data = json.load(f)
-        # 缓存版本校验：版本不匹配时自动刷新，避免代码模型与 Schema 不一致
-        if data.get("_schema_version") == __version__:
+        # 缓存版本校验：用模型定义哈希替代 __version__，模型变更时自动刷新
+        if data.get("_schema_version") == model_hash:
             return data
-        logger.info("Schema 版本 %s != %s，触发自动刷新", data.get("_schema_version"), __version__)
+        logger.info("Schema 哈希 %s != %s，触发自动刷新", data.get("_schema_version"), model_hash)
 
     sub_models = {
         "chroma": ChromaConfig,
@@ -61,20 +78,21 @@ def get_config_schema(force_refresh: bool = False) -> dict:
         "llm": LLMConfig,
         "memory": MemoryConfig,
         "suggestion": SuggestionConfig,
-        "buffer": BufferConfig,
         "dashboard": DashboardConfig,
         "server": ServerConfig,
         "auth": AuthConfig,
         "backup": BackupConfig,
         "notification": NotificationConfig,
-        "system_suggestion": SystemSuggestionConfig,
         "agent": AgentConfig,
         "hook_proxy": HookProxyConfig,
+        # v0.6.0 新增配置节
+        "memory_types": MemoryTypesConfig,
+        "activity_log": ActivityLogConfig,
     }
     extra_defs = {}
-    from .models import LLMEndpoint, SystemSuggestionTriggers
+    from .models import LLMEndpoint, MemoryTypeItem
 
-    for model_cls in [LLMEndpoint, SystemSuggestionTriggers]:
+    for model_cls in [LLMEndpoint, MemoryTypeItem]:
         extra_defs[model_cls.__name__] = model_cls.model_json_schema()
 
     properties = {}
@@ -87,7 +105,6 @@ def get_config_schema(force_refresh: bool = False) -> dict:
             "required": sub_schema.get("required", []),
             "additionalProperties": False,
         }
-    properties["prompt"] = {"type": "object"}
     required_sections = ["llm"]
 
     schema = {
@@ -97,7 +114,7 @@ def get_config_schema(force_refresh: bool = False) -> dict:
         "properties": properties,
         "required": required_sections,
         "additionalProperties": False,
-        "_schema_version": __version__,
+        "_schema_version": model_hash,
     }
 
     schema_path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,14 +149,18 @@ def validate_config(data: dict) -> list[str]:
     """校验配置字典：先 JSON Schema 结构校验，再 Pydantic 类型校验。"""
     errors = []
 
+    # 兼容旧配置：移除已删除的配置节（v0.7.1 移除 scheduler_briefing）
+    data.pop("scheduler_briefing", None)
+
     try:
         import jsonschema
     except ImportError:
         pass
     else:
         schema = get_config_schema()
+        schema_data = {k: v for k, v in data.items() if k != "prompt"}
         try:
-            jsonschema.validate(data, schema)
+            jsonschema.validate(schema_data, schema)
         except jsonschema.ValidationError as e:
             path = " → ".join(str(p) for p in e.absolute_path) if e.absolute_path else "根"
             errors.append(f"[Schema] {path}: {e.message}")
@@ -187,16 +208,17 @@ class MemoConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     suggestion: SuggestionConfig = Field(default_factory=SuggestionConfig)
-    buffer: BufferConfig = Field(default_factory=BufferConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
-    system_suggestion: SystemSuggestionConfig = Field(default_factory=SystemSuggestionConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     hook_proxy: HookProxyConfig = Field(default_factory=HookProxyConfig)
     prompt: PromptManager = Field(default_factory=PromptManager)
+    # v0.6.0 新增配置节（所有字段有默认值，旧 config.json 缺失自动补全）
+    memory_types: MemoryTypesConfig = Field(default_factory=MemoryTypesConfig)
+    activity_log: ActivityLogConfig = Field(default_factory=ActivityLogConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -257,6 +279,15 @@ class MemoConfig(BaseModel):
                     logger.info("已迁移 %d 个建议字段从 memory → suggestion", len(migrated))
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_scheduler_briefing(cls, data):
+        """v0.7.1: 移除已删除的 scheduler_briefing 配置节。"""
+        if isinstance(data, dict) and "scheduler_briefing" in data:
+            del data["scheduler_briefing"]
+            logger.info("已清除废弃配置节 scheduler_briefing")
+        return data
+
     def save(self):
         data = self.model_dump()
         for section_name, section in [
@@ -265,13 +296,11 @@ class MemoConfig(BaseModel):
             ("llm", self.llm),
             ("memory", self.memory),
             ("suggestion", self.suggestion),
-            ("buffer", self.buffer),
             ("dashboard", self.dashboard),
             ("server", self.server),
             ("auth", self.auth),
             ("backup", self.backup),
             ("notification", self.notification),
-            ("system_suggestion", self.system_suggestion),
             ("agent", self.agent),
             ("hook_proxy", self.hook_proxy),
         ]:
@@ -334,6 +363,14 @@ class MemoConfig(BaseModel):
                             val = float(val)
                         setattr(section_obj, field, val)
 
+        # P2-3: 环境变量覆盖后重新触发 Pydantic 验证，防止非法值通过 setattr 绕过约束
+        try:
+            cfg = cls.model_validate(cfg.model_dump())
+        except Exception as e:
+            logger.warning("环境变量覆盖后配置验证失败，回退到覆盖前配置: %s", e)
+            cfg = cls.model_validate({k: v for k, v in file_data.items() if k != "prompt"})
+            cfg.prompt = PromptManager.load()
+
         if file_data:
             backup_config(config_file)
 
@@ -362,7 +399,6 @@ class MemoConfig(BaseModel):
             ("llm", self.llm),
             ("memory", self.memory),
             ("suggestion", self.suggestion),
-            ("buffer", self.buffer),
             ("dashboard", self.dashboard),
             ("server", self.server),
             ("auth", self.auth),
@@ -375,7 +411,6 @@ class MemoConfig(BaseModel):
                     result[key] = "****"
                 else:
                     result[key] = field_value
-        self._flatten_section(result, "system_suggestion", self.system_suggestion)
         self._flatten_section(result, "agent", self.agent)
 
         result["llm.api_base"] = self.llm.api_base
@@ -403,6 +438,14 @@ class MemoConfig(BaseModel):
         except (ValueError, TypeError):
             return False
         setattr(section, field_name, parsed)
+        # P2-4: 修改后重新验证受影响的子模型
+        try:
+            validated = section.__class__.model_validate(section.model_dump())
+            setattr(self, section_name, validated)
+        except Exception as e:
+            logger.warning("配置字段 %s=%s 验证失败: %s，还原", key, value, e)
+            setattr(section, field_name, current)
+            return False
         return True
 
     @classmethod
@@ -411,5 +454,14 @@ class MemoConfig(BaseModel):
         return new
 
 
-# 全局单例配置实例
-config = MemoConfig.load()
+# 惰性配置加载
+
+_config: Optional[MemoConfig] = None
+
+
+def get_config() -> MemoConfig:
+    """惰性获取全局配置单例。首次调用时加载，后续返回缓存。"""
+    global _config
+    if _config is None:
+        _config = MemoConfig.load()
+    return _config

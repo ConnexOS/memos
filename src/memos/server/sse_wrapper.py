@@ -77,8 +77,10 @@ class ProjectAwareSSEWrapper:
             project_name = (params.get("name") or [None])[0]
             _set_session_project_id(pid, project_name)
 
-            # 提取 token（仅在 SSE 连接时 ?token= 参数有效）
-            token = (params.get("token") or [None])[0]
+            # 提取 token：优先 X-Auth-Token header（MCP SSE 也支持），回落 URL query param
+            headers = {k.decode("utf-8", errors="replace").lower(): v.decode("utf-8", errors="replace")
+                       for k, v in scope.get("headers", [])}
+            token = headers.get("x-auth-token") or (params.get("token") or [None])[0]
             if token:
                 user = verify_token_against_users(token)
                 if user:
@@ -107,7 +109,16 @@ class ProjectAwareSSEWrapper:
                 # 在 SSE handler task context 中设置 token，子任务（工具调用）继承此值
                 _auth_token_ctx.set(pending_token)
 
+                _resp_started = False
+
                 async def send_wrapper(message):
+                    nonlocal _resp_started
+                    # 防重复响应头：MCP 子应用异常时 Starlette 错误中间件
+                    # 会尝试发送新的 http.response.start，与已发送的 SSE 冲突
+                    if message["type"] == "http.response.start":
+                        if _resp_started:
+                            return
+                        _resp_started = True
                     if message["type"] == "http.response.body":
                         body = message.get("body", b"")
                         text = body.decode("utf-8", errors="replace")

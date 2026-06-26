@@ -14,6 +14,14 @@ if "MEMOS_HOME" not in os.environ:
 # 测试使用独立 collection，避免污染生产数据
 os.environ.setdefault("MEMOS_TEST_COLLECTION", "test_suite")
 
+# 设置 LLM 端点为本地回环地址，让 LLM 调用快速失败（避免 30s 超时）
+os.environ.setdefault("MEMOS_LLM_API_BASE", "http://127.0.0.1:1")
+os.environ.setdefault("MEMOS_LLM_ACTIVE", "test")
+
+# 设置 CLAUDE_PROJECT_DIR 为测试目录，避免异步消费者线程在 monkeypatch 恢复后丢失
+_test_claude_dir = str(Path(_project_root) / "etc" / "test_claude_project")
+os.environ.setdefault("CLAUDE_PROJECT_DIR", _test_claude_dir)
+
 # 限制 PyTorch 线程数，防止 Windows 上 safetensors 多线程加载导致内存访问冲突 (access violation)
 # 必须在任何 memos 模块导入之前设置
 os.environ.setdefault("OMP_NUM_THREADS", "1")

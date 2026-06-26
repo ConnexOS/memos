@@ -99,12 +99,13 @@ class TestDashboardAuth:
             patch("memos.config.config.auth.disable", False),
             patch("memos.config.loader.config.auth.secret_key", secret),
             patch("memos.config.loader.config.auth.disable", False),
-            patch("memos.web.auth.verify_token_against_users",
+            patch("memos.web.routes.auth.verify_token_against_users",
                    side_effect=lambda t: {"creator_id": "admin", "role": "admin", "name": "admin"}
                    if t == token else None),
         ):
-            from memos.web.app import app
+            from memos.server.app import create_unified_app
 
+            app = create_unified_app()
             with TestClient(app) as c:
                 yield c, token, token_hash, secret
 

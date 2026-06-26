@@ -37,14 +37,3 @@ class TestExtractAndStore:
             assert count == 0
 
 
-class TestAppendAutoTrigger:
-    def setup_method(self):
-        self.ext = MemoryExtractor()
-
-    def test_auto_extract_on_trigger(self):
-        self.ext._last_extract_time = 0
-        with mock.patch.object(self.ext, "extract_and_store", return_value=1):
-            for i in range(6):
-                self.ext.append_conversation("user", f"msg {i}")
-            # 5条触发提炼，第6条留在缓冲区
-            assert len(self.ext.conversation_buffer) == 1

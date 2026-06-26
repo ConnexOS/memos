@@ -11,13 +11,17 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.ruff_cache/
 
 # Runtime data
 memdb/
 model/
+backups/
+data/
+
 
 # Configuration
-etc/config.json
+etc/
 
 # Version control
 .svn/
@@ -34,6 +38,7 @@ logs/
 # IDE
 .vscode/
 .idea/
+.superpowers/
 *.swp
 *.swo
 
@@ -41,28 +46,25 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Documentation
+# Git worktrees
+.worktrees/
+
+# Documentation (internal)
 document/
 
-# Sensitive data
-etc/secret_key.txt
-etc/config.json.bak
-*.jsonl
-etc/*.log
-etc/auth_key.txt
+# Claude Snapshots
+.claude/snapshots/
 
-# IDE
-.vs/
-.ruff_cache/
-etc/users.json
-etc/.injected_records_*.json
-etc/.session_marker.json
-etc/prompts.zip
-*.bat
-*.ps1
+# MCP config (local tokens)
+.mcp.json
+
+# Playwright MCP debug artifacts
+.playwright-mcp/
+
+# Internal debug/utility scripts (not for public release)
 fix_tests.py
 inspect_test.py
 recover_file.py
-install.ps1
-install.sh
-requirements.txt
+check_token.py
+copy_memos.*
+upgrade-memos.ps1

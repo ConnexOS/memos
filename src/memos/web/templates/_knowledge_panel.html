@@ -1,114 +1,57 @@
-        <!-- ====== 知识库 Tab ====== -->
-        <div class="tab-pane fade" id="knowledge-panel" role="tabpanel">
-            <div class="row g-2 mt-2 mb-2" id="v41-stats-row">
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">今日提炼</div><div class="fw-bold" id="stat-today" style="font-size:.95rem">-</div></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">本周提炼</div><div class="fw-bold" id="stat-week" style="font-size:.95rem">-</div></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">即将过期</div><div class="fw-bold" id="stat-expiring" style="font-size:.95rem">-</div></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">已经过期</div><div class="fw-bold" id="stat-expired" style="font-size:.95rem">-</div></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">冲突统计</div><a href="#" class="fw-bold v41-stat-link" id="stat-conflict" style="font-size:.95rem" title="点击查看冲突详情">-</a></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">Token消耗</div><div class="fw-bold" id="stat-tokens" style="font-size:.95rem">-</div></div></div>
-                <div class="col"><div class="card text-center py-2"><div class="small text-secondary">成功率</div><a href="#" class="fw-bold v41-stat-link" id="stat-rate" style="font-size:.95rem" title="点击查看近7天趋势">-</a></div></div>
-            </div>
+<!-- ====== F6: 记忆管理面板 ====== -->
+<div class="tab-pane fade show active" id="knowledge-panel" role="tabpanel">
 
-            <!-- 搜索栏 -->
-            <div class="mb-2">
-                <div class="input-group input-group-sm">
-                    <input type="text" class="form-control" id="kb-search-query" placeholder="搜索知识库..." autocomplete="off">
-                    <button class="btn btn-primary" id="kb-search-btn"><i class="bi bi-search"></i></button>
-                    <button class="btn btn-outline-secondary" id="kb-search-advanced-toggle" title="高级选项" type="button">
-                        <i class="bi bi-sliders2"></i>
-                    </button>
-                    <button class="btn btn-outline-secondary d-none" id="kb-search-clear" title="清除结果"><i class="bi bi-x-lg"></i></button>
-                </div>
-                <!-- 搜索建议下拉 -->
-                <div id="kb-search-suggestions" class="list-group position-absolute" style="z-index:100;width:auto;min-width:300px;display:none;"></div>
-                <!-- 高级选项折叠 -->
-                <div id="kb-search-advanced" class="border rounded p-2 mt-1 small" style="display:none;">
-                    <div class="row g-1 align-items-center">
-                        <div class="col-auto"><label class="text-secondary">条数</label></div>
-                        <div class="col-auto"><input type="number" class="form-control form-control-sm" id="kb-search-topk" value="5" min="1" max="50" style="width:70px"></div>
-                        <div class="col-auto"><label class="text-secondary">天数</label></div>
-                        <div class="col-auto"><input type="number" class="form-control form-control-sm" id="kb-search-days" placeholder="不限" style="width:70px"></div>
-                        <div class="col-auto"><label class="text-secondary">类型</label></div>
-                        <div class="col-auto">
-                            <select id="kb-search-type" class="form-select form-select-sm" style="width:130px">
-                                <option value="">全部类型</option>
-                                <option value="fact">事实 (fact)</option>
-                                <option value="decision">决策 (decision)</option>
-                                <option value="preference">偏好 (preference)</option>
-                                <option value="bug_fix">故障修复 (bug_fix)</option>
-                                <option value="feature_design">功能设计 (feature_design)</option>
-                                <option value="code_optimize">代码优化 (code_optimize)</option>
-                                <option value="tech_knowledge">技术认知 (tech_knowledge)</option>
-                            </select>
-                        </div>
-                        <div class="col-auto">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="kb-search-hybrid" checked>
-                                <label class="form-check-label small" for="kb-search-hybrid">混合检索</label>
-                            </div>
-                        </div>
-                        <div class="col-auto">
-                            <label class="text-secondary">BM25</label>
-                            <input type="number" class="form-control form-control-sm d-inline" id="kb-search-bm25" value="0.7" min="0" max="1" step="0.1" style="width:60px">
-                        </div>
-                    </div>
-                </div>
-            </div>
+    <!-- === 固定头部：统计 + 工具栏 + 搜索 + 分页 === -->
+    <div style="flex-shrink:0;">
+    <!-- === 统计行 === -->
+    <div class="row g-2 mt-2 mb-2" id="mm-stats-row">
+        <div class="col"><div class="card text-center py-2"><div class="small text-secondary">知识总数</div><div class="fw-bold" id="mm-stat-total" style="font-size:.95rem">-</div></div></div>
+        <div class="col"><div class="card text-center py-2"><div class="small text-secondary">已遗忘</div><div class="fw-bold" id="mm-stat-forgotten" style="font-size:.95rem">-</div></div></div>
+        <div class="col"><div class="card text-center py-2"><div class="small text-secondary">已归档</div><div class="fw-bold" id="mm-stat-archived" style="font-size:.95rem">-</div></div></div>
+        <div class="col"><div class="card text-center py-2"><div class="small text-secondary">待归档</div><div class="fw-bold" id="mm-stat-expiring" style="font-size:.95rem">-</div></div></div>
+    </div>
 
-            <!-- 搜索结果区 -->
-            <div id="kb-search-results"></div>
-
-            <!-- 知识列表工具栏 -->
-            <div class="d-flex justify-content-between align-items-center mb-2 mt-2" id="kb-list-toolbar">
-                <div class="d-flex align-items-center gap-2">
-                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-                        <i class="bi bi-plus-lg"></i> 添加知识
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary" id="kb-import-btn" data-bs-toggle="modal" data-bs-target="#kb-import-modal">
-                        <i class="bi bi-upload"></i> 导入知识
-                    </button>
-                    <select id="kb-type-filter" class="form-select form-select-sm" style="width:auto;">
-                        <option value="">全部类型</option>
-                        <option disabled>── MCP 自动 ──</option>
-                        <option value="fact">事实 (fact)</option>
-                        <option value="decision">决策 (decision)</option>
-                        <option value="preference">偏好 (preference)</option>
-                        <option disabled>── 手工提炼 ──</option>
-                        <option value="bug_fix">故障修复 (bug_fix)</option>
-                        <option value="feature_design">功能设计 (feature_design)</option>
-                        <option value="code_optimize">代码优化 (code_optimize)</option>
-                        <option value="tech_knowledge">技术认知 (tech_knowledge)</option>
-                    </select>
-                    <div class="form-check form-check-inline d-inline-block">
-                        <input class="form-check-input" type="checkbox" id="kb-show-archived">
-                        <label class="form-check-label small" for="kb-show-archived">显示已归档</label>
-                    </div>
-                    <button class="btn btn-sm btn-outline-success d-none" id="kb-batch-export-btn">
-                        <i class="bi bi-download"></i> 导出选中 <span id="kb-batch-export-count" class="badge bg-success">0</span>
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger d-none" id="kb-batch-delete-btn">
-                        <i class="bi bi-trash"></i> 删除选中 <span id="kb-batch-delete-count" class="badge bg-danger">0</span>
-                    </button>
-                </div>
-                <nav id="kb-pagination-nav" class="d-flex align-items-center gap-1"></nav>
-            </div>
-
-            <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle" id="knowledge-table">
-                    <thead class="table-dark">
-                        <tr>
-                            <th style="width:36px"><input type="checkbox" class="form-check-input" id="kb-select-all"></th>
-                            <th style="width:40px">#</th>
-                            <th style="width:155px">时间</th>
-                            <th>内容</th>
-                            <th style="width:65px">类型</th>
-                            <th style="width:170px">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="kb-tbody">
-                        <tr><td colspan="6" class="text-center text-secondary py-4">加载中...</td></tr>
-                    </tbody>
-                </table>
-            </div>
+    <!-- === 顶部工具栏 === -->
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <!-- 类型过滤 pills -->
+        <div class="d-flex flex-wrap gap-1" id="mm-type-pills">
+            <button class="btn btn-sm btn-primary mm-type-pill active" data-type="">全部</button>
+            <button class="btn btn-sm btn-outline-secondary mm-type-pill" data-type="solution">方案</button>
+            <button class="btn btn-sm btn-outline-secondary mm-type-pill" data-type="decision">决策</button>
+            <button class="btn btn-sm btn-outline-secondary mm-type-pill" data-type="lesson">经验</button>
+            <button class="btn btn-sm btn-outline-secondary mm-type-pill" data-type="process">流程</button>
         </div>
+        <div class="ms-auto d-flex gap-1">
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+                <i class="bi bi-plus-lg"></i> 添加
+            </button>
+        </div>
+    </div>
+
+    <!-- === 搜索栏 === -->
+    <div class="mb-2">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" id="mm-search-query" placeholder="搜索记忆..." autocomplete="off">
+            <button class="btn btn-outline-secondary" id="mm-search-clear" title="清除"><i class="bi bi-x-lg"></i></button>
+        </div>
+    </div>
+
+    <!-- === 状态标签 === -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="small text-secondary" id="mm-status-label">加载中...</span>
+        <nav id="mm-pagination-nav" class="d-flex align-items-center gap-1"></nav>
+    </div>
+    </div>
+    <!-- === /固定头部 === -->
+
+    <!-- === 记忆卡片列表（可滚动） === -->
+    <div id="mm-card-container" class="row g-2">
+        <div class="col-12 text-center text-secondary py-5">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <span>加载中...</span>
+        </div>
+    </div>
+
+
+</div>

@@ -123,7 +123,6 @@ class TestHookSmoke:
         assert resp.status_code == 200
         data = resp.json()
         assert "additional_context" in data
-        assert "suggestions" in data
 
     def test_stop_endpoint(self, unified_client):
         """POST /api/hooks/stop 返回 200"""

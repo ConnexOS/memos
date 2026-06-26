@@ -17,13 +17,12 @@ def search(request: Request, req: SearchRequest):
     mem = request.app.state.context_memory
     logger.info("检索 query=%s top_k=%d project=%s", req.query[:50], req.top_k, req.project_id)
     knowledge_types = [
-        "fact",
+        "solution",
         "decision",
-        "preference",
-        "bug_fix",
-        "feature_design",
-        "code_optimize",
-        "tech_knowledge",
+        "lesson",
+        "process",
+        "task",
+        "briefing",
     ]
     where = {"type": req.type_filter} if req.type_filter else {"type": {"$in": knowledge_types}}
     results = mem.recall(

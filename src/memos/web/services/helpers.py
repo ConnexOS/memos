@@ -47,7 +47,7 @@ async def _probe_llm_endpoint(endpoint, timeout: float) -> tuple[bool, str, floa
         try:
             await writer.wait_closed()
         except Exception:
-            pass
+            logger.debug("TCP 连接关闭等待失败", exc_info=True)
         return True, "TCP Connection", latency_ms
     except asyncio.TimeoutError:
         return False, f"连接超时 ({timeout}s)", 0
@@ -235,7 +235,7 @@ def _template_to_dict(t: "PromptTemplate") -> dict:
             }
         )
     # 从模板 ID 提取端点名（{端点}@{类型} 格式）
-    known_types = {"extract", "daily-review"}
+    known_types = {"extract", "daily-review", "briefing"}
     ep_name = t.id
     if "@" in t.id:
         parts = t.id.rsplit("@", 1)

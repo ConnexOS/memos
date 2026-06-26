@@ -249,15 +249,15 @@ def extract_conversations(request: Request, req: ExtractConversationsRequest):
         return {"extracted": [], "message": "未提取到结构化记忆，请检查 LLM 服务是否正常运行"}
 
     # 清理提取结果：过滤无效内容，修正类型
-    valid_types = {"decision", "preference", "todo", "fact"}
+    valid_types = {"solution", "decision", "lesson", "process", "todo"}
     cleaned = []
     for m in extracted:
         content = (m.get("content") or "").strip()
         if not content:
             continue
-        t = m.get("type", "fact")
+        t = m.get("type", "solution")
         if t not in valid_types:
-            t = "fact"
+            t = "solution"
         cleaned.append({"content": content, "type": t})
 
     if not cleaned:
@@ -495,7 +495,10 @@ def extract_conversations_preview(request: Request, req: ExtractConversationsV2R
 
 @router.post("/api/conversations/daily-review")
 def generate_daily_review(request: Request, req: DailyReviewRequest):
-    """根据当天对话记录生成开发日报（Markdown 格式）"""
+    """根据当天对话记录生成开发日报（Markdown 格式）
+
+    start_ts/end_ts 由前端按浏览器时区计算（Unix 时间戳），后端直接使用。
+    """
     mem = request.app.state.context_memory
 
     # 日期格式校验
@@ -523,6 +526,8 @@ def generate_daily_review(request: Request, req: DailyReviewRequest):
         prompt_id=req.prompt_id,
         prompt_version=req.prompt_version,
         save_as_memory=req.save_as_memory,
+        start_ts=req.start_ts,
+        end_ts=req.end_ts,
     )
 
     if result.get("saved_id") and not result["report"]:
@@ -555,12 +560,16 @@ def preview_daily_review(request: Request, req: DailyReviewRequest):
 
     target_date = req.date or datetime.now().strftime("%Y-%m-%d")
     try:
-        dt = datetime.strptime(target_date, "%Y-%m-%d")
+        datetime.strptime(target_date, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(400, f"无效日期格式: {target_date}")
 
-    start_of_day = datetime(dt.year, dt.month, dt.day, 0, 0, 0).timestamp()
-    end_of_day = datetime(dt.year, dt.month, dt.day, 23, 59, 59).timestamp()
+    if req.start_ts is not None and req.end_ts is not None:
+        start_of_day, end_of_day = req.start_ts, req.end_ts
+    else:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+        start_of_day = datetime(dt.year, dt.month, dt.day, 0, 0, 0).timestamp()
+        end_of_day = datetime(dt.year, dt.month, dt.day, 23, 59, 59).timestamp()
 
     records = _query_conversations_by_date_range(mem, start_of_day, end_of_day, project_id=req.project_id)
     if not records:

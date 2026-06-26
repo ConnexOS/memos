@@ -46,7 +46,14 @@ def index(request: Request):
     notif_ctx = _get_notification_context()
     hdrs = {"Cache-Control": "no-cache, no-store, must-revalidate"}
     user_name = request.session.get("name", "")
-    ctx = {"notifications": notif_ctx, "version": memos_version, "user_name": user_name}
+    user_role = request.session.get("role", "")
+    ctx = {
+        "notifications": notif_ctx,
+        "version": memos_version,
+        "user_name": user_name,
+        "user_role": user_role,
+        "auth_disabled": config.auth.disable,
+    }
     if config.auth.disable:
         return templates.TemplateResponse(request, "dashboard.html", ctx, headers=hdrs)
     token_str = request.cookies.get("memos_session")

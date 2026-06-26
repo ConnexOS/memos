@@ -15,53 +15,219 @@
 {% include "_nav.html" %}
 
 <div class="container-fluid py-3">
-    <ul class="nav nav-tabs" id="contentTabs" role="tablist">
-        <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="conversation-tab" data-bs-toggle="tab" data-bs-target="#conversation-panel" type="button" role="tab">
-                <i class="bi bi-chat-dots me-1"></i>对话记录
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link" id="knowledge-tab" data-bs-toggle="tab" data-bs-target="#knowledge-panel" type="button" role="tab">
-                <i class="bi bi-database me-1"></i>知识管理
-            </button>
-        </li>
-        <li class="nav-item" role="presentation" id="sug-tab-nav">
-            <button class="nav-link" id="suggestions-tab" data-bs-toggle="tab" data-bs-target="#suggestions-panel" type="button" role="tab">
-                <i class="bi bi-lightbulb me-1"></i>主动建议
-            </button>
-        </li><!-- FIX(NEW-001): 按 F4.1 规格要求，主动建议 Tab 放在今日回顾之前，主动建议是 v0.4.4 核心功能 -->
-        <li class="nav-item" role="presentation">
-            <button class="nav-link" id="todo-tab" data-bs-toggle="tab" data-bs-target="#todo-panel" type="button" role="tab">
-                <i class="bi bi-check2-square me-1"></i>待办事项
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link" id="daily-review-tab" data-bs-toggle="tab" data-bs-target="#daily-review-panel" type="button" role="tab">
-                <i class="bi bi-calendar-day me-1"></i>今日回顾
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link" id="prompts-tab" data-bs-toggle="tab" data-bs-target="#prompts-panel" type="button" role="tab">
-                <i class="bi bi-pencil-square me-1"></i>提示词管理
-            </button>
-        </li>
-    </ul>
+    <!-- ========== Level 2: Group Content ========== -->
+    <div class="group-content" id="groupContent">
 
-    <div class="tab-content" id="contentTabsContent">
-        {% include "_conversation_panel.html" %}
+        <!-- ===== 1. 总览组 (Overview) ===== -->
+        <div class="group-pane active" id="group-overview" role="tabpanel">
+            <ul class="nav nav-pills subpanel-pills mb-2 mt-2" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="daily-review-tab" data-bs-toggle="tab" data-bs-target="#daily-review-panel" type="button" role="tab">
+                        <i class="bi bi-calendar-day me-1"></i>今日回顾
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#project-briefing-panel" type="button" role="tab">
+                        <i class="bi bi-journal-text me-1"></i>项目简报
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#task-progress-panel" type="button" role="tab">
+                        <i class="bi bi-list-task me-1"></i>任务看板
+                    </button>
+                </li>
+            </ul>
 
-        {% include "_knowledge_panel.html" %}
+            {% include "_daily_review_panel.html" %}
 
-        {% include "_active_suggestions_panel.html" %}
+            <!-- 项目简报（聚合视图 v0.7.1） -->
+            <div class="tab-pane fade" id="project-briefing-panel" role="tabpanel">
+                <!-- 统计条（由 JS 渲染） -->
+                <div id="brf-stats-row" class="row g-2 mt-2 mb-2"></div>
 
-        {% include "_prompts_panel.html" %}
+                <!-- 工具栏 -->
+                <div class="d-flex justify-content-between align-items-center gap-2 mb-2 mt-2 flex-wrap">
+                    <div class="d-flex align-items-center gap-2">
+                        <h6 class="mb-0 fw-semibold" style="font-size:1rem">📊 简报工作台</h6>
+                        <span id="brf-status-badge" class="badge bg-secondary">未生成</span>
+                        <span id="brf-injection-toggle" style="display:none;"></span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="date" class="form-control form-control-sm" id="brf-date" style="width:auto;max-width:160px;">
+                        <select id="brf-endpoint-select" class="form-select form-select-sm" style="width:auto;max-width:180px;">
+                            <option value="">(使用默认端点)</option>
+                        </select>
+                        <select id="brf-prompt-select" class="form-select form-select-sm" style="width:auto;max-width:220px;">
+                            <option value="">(自动选择提示词)</option>
+                        </select>
+                        <button class="btn btn-sm btn-primary" id="brf-generate-btn" onclick="triggerBriefing()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>立即生成
+                        </button>
+                    </div>
+                </div>
 
-        {% include "_todo_panel.html" %}
+                <!-- 上区：今日简报 -->
+                <div id="brf-today-container">
+                    <div class="text-center text-secondary py-3">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"></div><span>加载中...</span>
+                    </div>
+                </div>
 
-        {% include "_daily_review_panel.html" %}
-    </div>
-</div>
+                <hr class="my-2">
+
+                <!-- 下区：历史简报（标题固定 + 列表滚动） -->
+                <div id="brf-history-container" style="display:none;">
+                    <div id="brf-history-header" class="d-flex justify-content-between align-items-center mb-2 px-2">
+                        <h6 class="mb-0" id="brf-history-heading">📋 历史简报</h6>
+                        <div class="d-flex align-items-center gap-2">
+                            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="brf-expand-all-btn" title="展开/收起全部">
+                                <i class="bi bi-arrows-expand"></i>
+                            </button>
+                            <div id="brf-pagination-nav" class="d-flex align-items-center gap-1"></div>
+                        </div>
+                    </div>
+                    <div id="brf-history-list" style="overflow:hidden auto;">
+                        <div class="text-center text-secondary small py-3">暂无记录</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Task 进度 + 序列（v0.7.1：下区序列） -->
+            <div class="tab-pane fade" id="task-progress-panel" role="tabpanel">
+                <div id="task-progress-container"><div class="p-3"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></div>
+                <hr class="my-2">
+                <!-- 下区：任务序列 -->
+                <div id="task-sequence-container" class="mt-1" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 px-2">
+                        <div class="d-flex gap-2 align-items-center">
+                            <h6 class="mb-0" id="task-sequence-heading">任务序列</h6>
+                            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="btn-task-mode" onclick="toggleTaskMode()" title="任务模式">
+                                <i class="bi bi-toggle-off"></i> <span id="task-mode-label">手动</span>
+                            </button>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="btn-expand-all" onclick="toggleAllTaskDetails()" title="展开/收起全部">
+                                <i class="bi bi-arrows-expand"></i>
+                            </button>
+                            <input type="date" id="task-sequence-date" class="form-control form-control-sm"
+                                   style="width:auto;max-width:160px;">
+                            <button class="btn btn-sm btn-outline-info py-0" onclick="openTaskAudit()">
+                                <i class="bi bi-clock-history"></i> 任务审计
+                            </button>
+                        </div>
+                    </div>
+                    <div id="task-sequence-list">
+                        <div class="text-center text-secondary small py-3">暂无记录</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ===== 2. 对话组 (Conversation) ===== -->
+        <div class="group-pane" id="group-conversation" role="tabpanel">
+            <ul class="nav nav-pills subpanel-pills mb-2 mt-2" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="conversation-tab" data-bs-toggle="tab" data-bs-target="#conversation-panel" type="button" role="tab">
+                        <i class="bi bi-chat-dots me-1"></i>对话记录
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#memory-stream-panel" type="button" role="tab">
+                        <i class="bi bi-water me-1"></i>事件看板
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#monitor-panel" type="button" role="tab">
+                        <i class="bi bi-activity me-1"></i>监控面板
+                    </button>
+                </li>
+            </ul>
+
+            {% include "_conversation_panel.html" %}
+
+            <!-- 事件看板 -->
+            <div class="tab-pane fade" id="memory-stream-panel" role="tabpanel">
+                <div id="memory-stream-container"><div class="p-3"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></div>
+            </div>
+
+            <!-- 监控面板 -->
+            <div class="tab-pane fade" id="monitor-panel" role="tabpanel">
+                <div id="monitor-container"><div class="p-3"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div></div>
+            </div>
+        </div>
+
+        <!-- ===== 3. 记忆组 (Memory) ===== -->
+        <div class="group-pane" id="group-memory" role="tabpanel">
+            {% include "_knowledge_panel.html" %}
+        </div>
+
+        <!-- ===== 4. 跟进组 (Follow-up) ===== -->
+        <div class="group-pane" id="group-followup" role="tabpanel">
+            <ul class="nav nav-pills subpanel-pills mb-2 mt-2" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="todo-tab" data-bs-toggle="tab" data-bs-target="#todo-panel" type="button" role="tab">
+                        <i class="bi bi-check2-square me-1"></i>待办
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#watchlist-panel" type="button" role="tab">
+                        <i class="bi bi-eye me-1"></i>待关注
+                    </button>
+                </li>
+            </ul>
+
+            {% include "_todo_panel.html" %}
+
+            <!-- 待关注 -->
+            <div class="tab-pane fade" id="watchlist-panel" role="tabpanel">
+                <div id="watchlist-container"><div class="p-3"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></div>
+            </div>
+        </div>
+
+        <!-- ===== 5. 配置组 (Settings) ===== -->
+        <div class="group-pane" id="group-settings" role="tabpanel">
+            <ul class="nav nav-pills subpanel-pills mb-2 mt-2" role="tablist">
+                {% if auth_disabled or user_role == "admin" %}
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="prompts-tab" data-bs-toggle="tab" data-bs-target="#prompts-panel" type="button" role="tab">
+                        <i class="bi bi-pencil-square me-1"></i>提示词管理
+                    </button>
+                </li>
+                {% endif %}
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link{% if not (auth_disabled or user_role == 'admin') %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#user-suggestions-panel" type="button" role="tab">
+                        <i class="bi bi-hand-index-thumb me-1"></i>用户建议
+                    </button>
+                </li>
+            </ul>
+
+            <!-- 项目设置 placeholder -->
+
+            {% include "_prompts_panel.html" %}
+
+            <!-- 用户建议 -->
+            <div class="tab-pane fade" id="user-suggestions-panel" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+                    <div><span class="small fw-semibold">建议管理</span></div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="small text-secondary">建议总数：<span id="suggestion-total-count">0</span></span>
+                        <button class="btn btn-sm btn-outline-success py-0" onclick="window.promoteToSuggestion && promoteToSuggestion('')" title="新建用户建议"><i class="bi bi-plus-lg"></i></button>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="form-check form-switch d-inline-block mb-0" style="min-height:1em">
+                                <input class="form-check-input" type="checkbox" id="sug-pause-toggle" role="switch" style="margin-top:0">
+                            </div>
+                            <label class="small text-nowrap" for="sug-pause-toggle">暂停推送</label>
+                        </div>
+                    </div>
+                </div>
+                <div id="manual-suggestions-container"><div class="p-3"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></div>
+            </div>
+
+        </div>
+
+    </div><!-- /groupContent -->
+</div><!-- /container-fluid -->
 
 
 {% include "_modals.html" %}
@@ -143,7 +309,84 @@
 <script src="/static/js/api-client.js?v={{ version }}"></script>
 <script src="/static/js/logout.js?v={{ version }}"></script>
 <script src="/static/js/dashboard.js?v={{ version }}-pm"></script>
-<script src="/static/js/suggestions.js?v={{ version }}"></script>
+<!-- suggestions.js 已移除：旧管道三建议系统在 v0.7.0 废弃，功能已迁至 dashboard.js -->
 <script src="/static/js/todos.js?v={{ version }}"></script>
+
+<!-- Group navigation hash routing (basic; F2b will provide full JS integration) -->
+<script>
+(function() {
+    'use strict';
+
+    function switchGroup(group) {
+        var tab = document.querySelector('#groupTabs [data-group="' + group + '"]');
+        if (!tab) return;
+
+        // Deactivate all group tabs
+        document.querySelectorAll('#groupTabs [data-group]').forEach(function(t) {
+            t.classList.remove('active');
+        });
+        tab.classList.add('active');
+
+        // Toggle group panes
+        document.querySelectorAll('.group-pane').forEach(function(p) {
+            p.classList.remove('active');
+        });
+        var pane = document.getElementById('group-' + group);
+        if (!pane) return;
+        pane.classList.add('active');
+
+        // Activate the first sub-pill within this group (if none already active)
+        var activePill = pane.querySelector('.subpanel-pills .nav-link.active');
+        if (!activePill) {
+            activePill = pane.querySelector('.subpanel-pills .nav-link');
+        }
+        if (activePill && window.bootstrap) {
+            // Bootstrap Tab.show() 在按钮已有 active 时是 no-op，
+            // 导致依赖 shown.bs.tab 事件加载的懒加载面板（事件看板等）
+            // 在首次打开时永远不会触发数据加载。
+            if (activePill.classList.contains('active')) {
+                var target = document.querySelector(activePill.getAttribute('data-bs-target'));
+                if (target && !target.classList.contains('show')) {
+                    target.classList.add('show', 'active');
+                }
+                // 手动派发 shown.bs.tab 事件，触发面板数据加载
+                activePill.dispatchEvent(new Event('shown.bs.tab', {bubbles: true}));
+            } else {
+                bootstrap.Tab.getOrCreateInstance(activePill).show();
+            }
+        } else if (group === 'memory' && typeof loadMemoryManagement === 'function') {
+            // 记忆组无 subpanel-pills，直接触发加载
+            if (typeof loadMemoryManagement === 'function') {
+                loadMemoryManagement();
+            }
+        }
+    }
+
+    // Click delegation for group tabs
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('#groupTabs [data-group]');
+        if (btn) {
+            var g = btn.getAttribute('data-group');
+            switchGroup(g);
+            window.location.hash = g;
+            e.preventDefault();
+        }
+    });
+
+    // Hash change listener
+    window.addEventListener('hashchange', function() {
+        var g = window.location.hash.slice(1) || 'overview';
+        if (document.querySelector('#groupTabs [data-group="' + g + '"]')) {
+            switchGroup(g);
+        }
+    });
+
+    // Initial load from URL hash
+    var initial = window.location.hash.slice(1) || 'overview';
+    if (document.querySelector('#groupTabs [data-group="' + initial + '"]')) {
+        switchGroup(initial);
+    }
+})();
+</script>
 </body>
 </html>

@@ -39,7 +39,8 @@ def list_memories(
     days: int = Query(default=None, description="auto/manual 时限制最近 N 天（与统计卡联动）"),
     status: str = Query(
         default=None,
-        pattern=r"^(active|pending|completed|archived|expired|deprecated)$",
+        # F5: 三态 status + 过渡期兼容
+        pattern=r"^(active|forgotten|archived|pending|completed|expired|deprecated)$",
         description="按知识状态过滤",
     ),
 ):
@@ -56,7 +57,8 @@ def list_memories(
     if source == "auto":
         source_clauses.append({"source": "auto_extracted"})
     elif source == "manual":
-        source_clauses.append({"source": {"$in": ["user_extracted", "user_appended", "user_instructed"]}})
+        # F5: 新旧 source 值兼容
+        source_clauses.append({"source": {"$in": ["user_extracted", "user_appended", "user_instructed", "manual"]}})
     elif source == "expiring_soon":
         now = time_mod.time()
         archive_sec = config.memory.archive_days * 86400
@@ -94,13 +96,12 @@ def list_memories(
 
     if not type:
         type = [
-            "fact",
+            "solution",
             "decision",
-            "preference",
-            "bug_fix",
-            "feature_design",
-            "code_optimize",
-            "tech_knowledge",
+            "lesson",
+            "process",
+            "task",
+            "briefing",
         ]
     logger.info("GET /api/memories project=%s type=%s source=%s offset=%d", project_id, type, source, offset)
     items = mem.list_memories(
@@ -130,7 +131,7 @@ def create_memory(request: Request, req: CreateMemoryRequest, project_id: str = 
         "type": req.type,
         "project_id": req.project_id or project_id,
         "project_name": os.path.basename(os.getcwd()),
-        "source": "user_appended",
+        "source": "manual",
         "quality_score": 1.0,
         "quality_reason": "用户直写",
     }
@@ -304,6 +305,23 @@ def batch_delete_memories(request: Request, req: BatchDeleteRequest):
     return {"deleted": deleted, "errors": errors, "message": f"已删除 {len(deleted)} 条记忆"}
 
 
+# --- API: 遗忘/恢复/归档 ---
+
+
+@router.post("/api/memories/{id}/forget")
+def forget_memory(request: Request, id: str):
+    """F6: 标记记忆为 forgotten 状态。"""
+    mem = request.app.state.context_memory
+    try:
+        mem.forget_memory(id)
+    except (ValueError, ChromaDBError) as e:
+        logger.warning("遗忘记忆失败 id=%s error=%s", id, e)
+        raise HTTPException(404, str(e))
+    logger.info("记忆已遗忘 id=%s", id)
+    _invalidate_projects_cache()
+    return {"message": "记忆已遗忘"}
+
+
 # --- API: 归档/恢复 ---
 
 
@@ -357,6 +375,59 @@ def view_memory(request: Request, id: str):
     return {"reuse_count": new_count}
 
 
+# F10: 反馈反哺 — 用户反馈 useful / not-useful
+
+
+@router.post("/api/memories/{id}/feedback/useful")
+def feedback_useful(request: Request, id: str):
+    """标记记忆为有用：useful_feedback_count +1"""
+    import time as time_mod
+
+    mem = request.app.state.context_memory
+    old = mem.get_memory(id)
+    if old is None:
+        raise HTTPException(404, "记忆未找到")
+    meta = dict(old["metadata"])
+    current = int(meta.get("useful_feedback_count", 0) or 0)
+    meta["useful_feedback_count"] = current + 1
+    meta["last_feedback_at"] = time_mod.time()
+    mem.store.update(ids=[id], metadatas=[meta])
+    # F10: SSE 事件总线
+    try:
+        from ...features.event_bus import touch_event as _touch
+
+        _touch("feedback")
+    except Exception:
+        logger.debug("SSE 事件总线 touch 失败（feedback 有用）", exc_info=True)
+    logger.info("反馈有用: %s... useful_feedback_count=%d", id[:8], meta["useful_feedback_count"])
+    return {"useful_feedback_count": meta["useful_feedback_count"], "message": "已标记为有用"}
+
+
+@router.post("/api/memories/{id}/feedback/not-useful")
+def feedback_not_useful(request: Request, id: str):
+    """标记记忆为无用：useful_feedback_count -1（最低 -10）"""
+    import time as time_mod
+
+    mem = request.app.state.context_memory
+    old = mem.get_memory(id)
+    if old is None:
+        raise HTTPException(404, "记忆未找到")
+    meta = dict(old["metadata"])
+    current = int(meta.get("useful_feedback_count", 0) or 0)
+    meta["useful_feedback_count"] = max(-10, current - 1)
+    meta["last_feedback_at"] = time_mod.time()
+    mem.store.update(ids=[id], metadatas=[meta])
+    # F10: SSE 事件总线
+    try:
+        from ...features.event_bus import touch_event as _touch
+
+        _touch("feedback")
+    except Exception:
+        logger.debug("SSE 事件总线 touch 失败（feedback 无用）", exc_info=True)
+    logger.info("反馈无用: %s... useful_feedback_count=%d", id[:8], meta["useful_feedback_count"])
+    return {"useful_feedback_count": meta["useful_feedback_count"], "message": "已标记为无用"}
+
+
 # --- v0.4.1 API: 冲突管理 ---
 
 
@@ -384,7 +455,7 @@ def batch_create_memories(request: Request, req: BatchCreateMemoriesRequest, pro
             "type": m.type,
             "project_id": m.project_id,
             "project_name": os.path.basename(os.getcwd()),
-            "source": "user_appended",
+            "source": "manual",
             "quality_score": 1.0,
             "quality_reason": "用户直写",
         }
@@ -447,7 +518,7 @@ def batch_create_cards(request: Request, req: BatchCreateCardsRequest, project_i
             "problem": card.problem,
             "solution": card.solution,
             "insight": card.insight,
-            "source": "user_extracted",
+            "source": "manual",
         }
         if card.quality_score is not None:
             metadata["quality_score"] = card.quality_score

@@ -55,6 +55,19 @@ def test_memos_project_bad_json_raises(tmp_path):
         assert "格式错误" in str(e)
 
 
+def test_find_project_file_in_parent_dir(tmp_path):
+    """从子目录向上查找 .memos-project"""
+    proj_file = tmp_path / ".memos-project"
+    proj_file.write_text(json.dumps({"id": "parent01", "name": "ParentProj"}), encoding="utf-8")
+    sub_dir = tmp_path / "sub" / "deep"
+    sub_dir.mkdir(parents=True)
+    clear_project_id_cache()
+    pid = resolve_project_id(str(sub_dir))
+    name = resolve_project_name(str(sub_dir))
+    assert pid == "parent01"
+    assert name == "ParentProj"
+
+
 def test_clear_cache_affects_only_specified(tmp_path):
     """clear_project_id_cache(cwd) 只清指定缓存"""
     d1 = tmp_path / "proj1"

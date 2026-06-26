@@ -62,3 +62,11 @@
 ## 归档操作
 
 归档操作已从 MCP 移除（转向 Web 仪表板），`force_extract` 保留供 AI 助手主动触发提炼。
+
+## Unified 模式（v0.5.0）
+
+v0.5.0 引入统一服务器架构，MCP 工具通过 HTTP 端点访问：
+
+- **Unified 模式**: `memos server` 启动 FastAPI 统一进程，MCP 工具通过 `POST /api/mcp/{method_name}` 调用
+- **Legacy 模式**: 保持原有的 stdio FastMCP 方式（与 v0.4.x 兼容）
+- **薄代理**: `memos mcp` 在本地运行 stdio→HTTP 转发代理，Claude Code 无需改动配置

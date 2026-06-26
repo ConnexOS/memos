@@ -11,6 +11,7 @@
                                     <option value="">全部类型</option>
                                     <option value="extract">提炼知识</option>
                                     <option value="daily-review">今日回顾</option>
+                                    <option value="briefing">简报生成</option>
                                 </select>
                                 <span class="text-secondary" id="prompt-count-text" style="font-size:.75rem">总数: 0</span>
                             </div>
@@ -18,7 +19,7 @@
                                 <i class="bi bi-plus-lg"></i> 新建
                             </button>
                         </div>
-                        <div class="list-group list-group-flush" id="prompt-template-list" style="max-height:400px;overflow-y:auto">
+                        <div class="list-group list-group-flush" id="prompt-template-list" style="max-height:400px;overflow:hidden auto">
                             <div class="text-center text-secondary small py-3">加载中...</div>
                         </div>
                     </div>
@@ -104,7 +105,7 @@
                                     <textarea class="form-control form-control-sm font-monospace" id="prompt-edit-system"
                                         rows="48" style="font-size:.8rem;resize:vertical"></textarea>
                                 </div>
-                                <div style="max-height:200px;overflow-y:auto">
+                                <div style="max-height:200px;overflow:hidden auto">
                                     <style>
 #prompt-version-table, #prompt-version-table th, #prompt-version-table td { border-color: #565a5d !important; }
 </style>

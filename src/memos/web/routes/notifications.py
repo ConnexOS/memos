@@ -80,7 +80,7 @@ def _check_expiry_notify(request: Request):
                 link="/?tab=daily-review",
             )
     except Exception:
-        pass  # 过期检查失败不影响页面加载
+        logger.debug("过期检查失败（不影响页面加载）", exc_info=True)
 
 
 @router.post("/api/notifications/{notif_id}/read")
@@ -147,7 +147,7 @@ def renew_all_expired(
                 "$and": [
                     {"timestamp": {"$gte": now - archive_sec}},
                     {"timestamp": {"$lt": now - archive_sec + warn_sec}},
-                    {"active": {"$ne": False}},
+                    {"status": "active"},
                     {"project_id": project_id},  # P0-1: 限定当前项目
                 ]
             },
@@ -165,7 +165,7 @@ def renew_all_expired(
             where={
                 "$and": [
                     {"timestamp": {"$lt": expired_cutoff}},
-                    {"active": {"$ne": False}},
+                    {"status": "active"},
                     {"project_id": project_id},  # P0-1: 限定当前项目
                 ]
             },
@@ -188,6 +188,6 @@ def renew_all_expired(
             for n in all_notifs:
                 notifier.dismiss(n["id"])
         except Exception:
-            pass
+            logger.debug("批量关闭过期提醒通知失败", exc_info=True)
 
     return {"ok": True, "renewed": total, "message": f"已续期 {total} 条记忆"}

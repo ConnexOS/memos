@@ -51,6 +51,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         key="memos_session",
         value=session_token,
         httponly=True,
+        samesite="strict",
         max_age=config.auth.session_ttl,
     )
 

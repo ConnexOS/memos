@@ -1,8 +1,11 @@
 # src/memos/hook_proxy/auth.py
 
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _CREDENTIALS_DIR = Path.home() / ".memos" / "etc"
 _CREDENTIALS_FILE = _CREDENTIALS_DIR / "credentials.json"
@@ -16,7 +19,7 @@ def _get_project_credentials_path(project_dir: str | None = None) -> Path | None
         if (cwd / ".memos-project").exists():
             return cwd / ".claude" / _PROJECT_CREDENTIALS_NAME
     except Exception:
-        pass
+        logger.debug("获取项目凭据路径失败", exc_info=True)
     return None
 
 
@@ -54,7 +57,7 @@ def save_credentials(server_url: str, token: str):
         try:
             os.chmod(project_path, 0o600)
         except Exception:
-            pass
+            logger.warning("设置项目凭据文件权限失败: %s", project_path)
         return
 
     # 全局 fallback
@@ -64,7 +67,7 @@ def save_credentials(server_url: str, token: str):
     try:
         os.chmod(_CREDENTIALS_FILE, 0o600)
     except Exception:
-        pass
+        logger.warning("设置全局凭据文件权限失败: %s", _CREDENTIALS_FILE)
 
 
 def clear_credentials() -> bool:

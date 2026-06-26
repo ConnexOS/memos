@@ -117,9 +117,10 @@ def list_todos(
             status_history = json.loads(raw_history) if isinstance(raw_history, str) else list(raw_history)
         except (json.JSONDecodeError, TypeError):
             status_history = []
-        active = meta.get("active", True)
-        if not isinstance(active, bool):
-            active = True
+        # F5: 使用 status 替代 active
+        memory_status = meta.get("status", "active")
+        if memory_status not in ("active", "forgotten", "archived"):
+            memory_status = "active"
         todo = {
             "id": item["id"],
             "content": item.get("document", ""),
@@ -135,7 +136,7 @@ def list_todos(
             "completed_at": meta.get("completed_at", None),
             "cancelled_at": meta.get("cancelled_at", None),
             "status_history": status_history,
-            "active": active,
+            "status": memory_status,
         }
         todos.append(todo)
 
@@ -170,9 +171,9 @@ def create_todo(request: Request, body: dict, project_id: str = Depends(get_proj
         "type": "todo",
         "todo_status": "pending",
         "priority": priority,
-        "active": True,
+        "status": "active",
         "project_id": project_id,
-        "source": "user_appended",
+        "source": "manual",
         "status_history": json.dumps([]),
         "sort_order": now,
         "timestamp": now,
@@ -344,7 +345,8 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...), project_
     mem = request.app.state.context_memory
     results = mem.list_memories(
         project_id=project_id,
-        where={"type": "todo", "todo_status": todo_status, "active": True},
+        # F5: 使用 status 替代 active
+        where={"type": "todo", "todo_status": todo_status, "status": "active"},
         limit=200,
         offset=0,
     )
@@ -354,7 +356,7 @@ def bulk_archive_todos(request: Request, todo_status: str = Query(...), project_
         if item.get("metadata", {}).get("project_id") != project_id:
             continue  # skip items not belonging to current project
         try:
-            mem.update_memory(item["id"], new_metadata={"active": False})
+            mem.update_memory(item["id"], new_metadata={"status": "archived", "inactive_reason": "manual_archive"})
             archived += 1
         except Exception as e:
             logger.warning("批量归档跳过 id=%s error=%s", item["id"][:8], e)
@@ -375,7 +377,7 @@ def archive_todo(request: Request, todo_id: str, project_id: str = Depends(get_p
     if old.get("metadata", {}).get("project_id") != project_id:
         raise HTTPException(404, f"待办未找到: {todo_id[:8]}")
     try:
-        mem.update_memory(todo_id, new_metadata={"active": False})
+        mem.update_memory(todo_id, new_metadata={"status": "archived", "inactive_reason": "manual_archive"})
     except Exception as e:
         logger.warning("归档待办失败 id=%s error=%s", todo_id[:8], e)
         raise HTTPException(500, f"归档失败: {e}")

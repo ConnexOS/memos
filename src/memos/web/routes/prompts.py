@@ -5,7 +5,7 @@ import logging
 # 本模块特有导入
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...config import _DEFAULT_SYSTEM_PROMPT, PromptTemplate, PromptVersion, _get_version_file, config
 from ..models import (
@@ -23,17 +23,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _require_admin(request: Request):
+    """依赖函数：检查当前用户是否为管理员。
+
+    认证关闭时放行，无认证信息返回 401，非管理员返回 403。
+    """
+    if config.auth.disable:
+        return
+    role = request.session.get("role", "")
+    if not role:
+        raise HTTPException(401, "未登录或 users.json 不存在")
+    if role != "admin":
+        raise HTTPException(403, "仅管理员可操作提示词管理")
+
+
 def _is_valid_endpoint(name: str) -> bool:
     """检查名称是否为 config.json 中配置的有效端点"""
     return any(ep.name == name for ep in config.llm.endpoints)
 
 
 @router.get("/api/prompts")
-def list_prompts(request: Request):
+def list_prompts(request: Request, _admin: None = Depends(_require_admin)):
     """列出所有端点关联的提示词模板（无模板则用虚拟默认条目托底）。"""
     pc = config.prompt
     endpoint_names = {ep.name for ep in config.llm.endpoints}
-    known_types = {"extract", "daily-review"}
+    known_types = {"extract", "daily-review", "briefing"}
     items = []
     endpoint_type_covered = set()
 
@@ -56,7 +70,7 @@ def list_prompts(request: Request):
         endpoint_type_covered.add((ep_name, t.template_type))
 
     # 2. 对每个端点的每种类型，缺少模板时生成虚拟默认条目
-    type_names = {"extract": "提炼知识", "daily-review": "今日回顾"}
+    type_names = {"extract": "提炼知识", "daily-review": "今日回顾", "briefing": "简报生成"}
     for ep in config.llm.endpoints:
         for ttype in known_types:
             if (ep.name, ttype) not in endpoint_type_covered:
@@ -84,7 +98,7 @@ def list_prompts(request: Request):
 
 
 @router.get("/api/prompts/{id}")
-def get_prompt(request: Request, id: str):
+def get_prompt(request: Request, id: str, _admin: None = Depends(_require_admin)):
     """获取单个提示词模板详情（含版本列表）。无真实模板时若为有效端点则返回默认模板托底"""
     t = config.prompt.get(id)
     if not t:
@@ -93,14 +107,14 @@ def get_prompt(request: Request, id: str):
         template_type = "extract"
         if "@" in id:
             parts = id.rsplit("@", 1)
-            known_types = {"extract", "daily-review"}
+            known_types = {"extract", "daily-review", "briefing"}
             if parts[1] in known_types:
                 ep_name = parts[0]
                 template_type = parts[1]
         if _is_valid_endpoint(ep_name):
             # 使用类型对应的缺省回退模板
             fallback_id = f"fallback@{template_type}"
-            default_t = config.prompt.get(fallback_id) or config.prompt.get("fallback")
+            default_t = config.prompt.get(fallback_id) or config.prompt.get(f"default@{template_type}") or config.prompt.get("fallback")
             if default_t:
                 result = _template_to_dict(default_t)
                 result["id"] = id
@@ -117,7 +131,7 @@ def get_prompt(request: Request, id: str):
 
 
 @router.post("/api/prompts", status_code=201)
-def create_prompt(request: Request, req: CreatePromptRequest):
+def create_prompt(request: Request, req: CreatePromptRequest, _admin: None = Depends(_require_admin)):
     """为指定端点创建专属提示词模板。模板 ID = {端点名}-{类型}，端点+类型为唯一 KEY。
     从对应类型的默认模板 fork system_prompt 作为 v1.0.0 版本。"""
     pc = config.prompt
@@ -163,7 +177,7 @@ def create_prompt(request: Request, req: CreatePromptRequest):
 
 
 @router.put("/api/prompts/{id}")
-def update_prompt(request: Request, id: str, req: UpdatePromptRequest):
+def update_prompt(request: Request, id: str, req: UpdatePromptRequest, _admin: None = Depends(_require_admin)):
     """更新提示词模板元数据"""
     pc = config.prompt
     t = pc.get(id)
@@ -186,7 +200,7 @@ def update_prompt(request: Request, id: str, req: UpdatePromptRequest):
 
 
 @router.delete("/api/prompts/{id}")
-def delete_prompt(request: Request, id: str):
+def delete_prompt(request: Request, id: str, _admin: None = Depends(_require_admin)):
     """删除提示词模板（不允许删除 default）"""
     pc = config.prompt
     if not pc.delete(id):
@@ -200,7 +214,7 @@ def delete_prompt(request: Request, id: str):
 
 
 @router.post("/api/prompts/{id}/draft")
-def save_draft(request: Request, id: str, req: SaveDraftRequest):
+def save_draft(request: Request, id: str, req: SaveDraftRequest, _admin: None = Depends(_require_admin)):
     """保存草稿（仅 system_prompt，不创建版本），草稿即时生效于提炼"""
     pc = config.prompt
     t = pc.get(id)
@@ -217,7 +231,7 @@ def save_draft(request: Request, id: str, req: SaveDraftRequest):
 
 
 @router.put("/api/prompts/{id}/config")
-def save_prompt_config(request: Request, id: str, req: SaveConfigRequest):
+def save_prompt_config(request: Request, id: str, req: SaveConfigRequest, _admin: None = Depends(_require_admin)):
     """保存模板级公共属性（名称、描述、消息格式、LLM 参数等）"""
     pc = config.prompt
     t = pc.get(id)
@@ -243,7 +257,7 @@ def save_prompt_config(request: Request, id: str, req: SaveConfigRequest):
 
 
 @router.post("/api/prompts/{id}/upgrade")
-def upgrade_prompt(request: Request, id: str, req: UpgradeRequest):
+def upgrade_prompt(request: Request, id: str, req: UpgradeRequest, _admin: None = Depends(_require_admin)):
     """将当前草稿升级为新版本"""
     pc = config.prompt
     t = pc.get(id)
@@ -263,7 +277,7 @@ def upgrade_prompt(request: Request, id: str, req: UpgradeRequest):
 
 
 @router.get("/api/prompts/{id}/versions/{version}")
-def get_prompt_version(request: Request, id: str, version: str):
+def get_prompt_version(request: Request, id: str, version: str, _admin: None = Depends(_require_admin)):
     """获取指定版本完整内容"""
     pc = config.prompt
     t = pc.get(id)
@@ -277,7 +291,7 @@ def get_prompt_version(request: Request, id: str, version: str):
 
 
 @router.delete("/api/prompts/{id}/versions/{version}")
-def delete_prompt_version(request: Request, id: str, version: str):
+def delete_prompt_version(request: Request, id: str, version: str, _admin: None = Depends(_require_admin)):
     """删除指定版本（不可删除活跃版本或最后一个版本）"""
     pc = config.prompt
     t = pc.get(id)
@@ -295,7 +309,7 @@ def delete_prompt_version(request: Request, id: str, version: str):
 
 
 @router.post("/api/prompts/{id}/sync-to-active")
-def sync_draft_to_active(request: Request, id: str):
+def sync_draft_to_active(request: Request, id: str, _admin: None = Depends(_require_admin)):
     """将当前草稿的 system_prompt 同步写入活跃版本（覆盖），用于微小修改无需新建版本号"""
     pc = config.prompt
     t = pc.get(id)
@@ -310,7 +324,7 @@ def sync_draft_to_active(request: Request, id: str):
 
 
 @router.post("/api/prompts/{id}/activate-version/{version}")
-def activate_prompt_version(request: Request, id: str, version: str):
+def activate_prompt_version(request: Request, id: str, version: str, _admin: None = Depends(_require_admin)):
     """切换活跃版本（只更新 system_prompt，公共属性不变）"""
     pc = config.prompt
     t = pc.get(id)
@@ -329,7 +343,7 @@ def activate_prompt_version(request: Request, id: str, version: str):
 
 
 @router.post("/api/prompts/{id}/rollback/{version}")
-def rollback_prompt(request: Request, id: str, version: str, req: RollbackRequest = None):
+def rollback_prompt(request: Request, id: str, version: str, req: RollbackRequest = None, _admin: None = Depends(_require_admin)):
     """回滚到指定历史版本（生成新版本）"""
     pc = config.prompt
     t = pc.get(id)
@@ -352,7 +366,7 @@ def rollback_prompt(request: Request, id: str, version: str, req: RollbackReques
 
 
 @router.get("/api/prompts/{id}/diff")
-def diff_prompt_versions(request: Request, id: str, v1: str = "", v2: str = ""):
+def diff_prompt_versions(request: Request, id: str, v1: str = "", v2: str = "", _admin: None = Depends(_require_admin)):
     """对比两个版本的 system_prompt 差异（简易行级 diff）"""
     pc = config.prompt
     t = pc.get(id)
@@ -390,7 +404,7 @@ def diff_prompt_versions(request: Request, id: str, v1: str = "", v2: str = ""):
 
 
 @router.get("/api/prompts/for-endpoint/{name}")
-def get_prompt_for_endpoint(request: Request, name: str, type: str = "extract"):
+def get_prompt_for_endpoint(request: Request, name: str, type: str = "extract", _admin: None = Depends(_require_admin)):
     """获取指定端点对应类型的提示词模板（按显式关联 → 命名约定 → 类型默认 fallback）"""
     t = config.prompt.get_for_endpoint(name, template_type=type)
     if not t:

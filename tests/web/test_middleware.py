@@ -73,13 +73,13 @@ class TestProjectContextMiddleware:
                 assert resp.status_code == 404
                 assert "未找到" in resp.json()["detail"]
 
-    def test_跨项目写拒绝_suggestions(self):
-        """A 项目 dismiss B 项目的建议 → 404"""
+    def test_跨项目写拒绝_manual_suggestions(self):
+        """A 项目删除 B 项目的用户建议 → 404"""
         mock_mem = MagicMock()
         mock_mem.store.get.return_value = {
             "ids": ["sug-id"],
             "documents": ["test suggestion"],
-            "metadatas": [{"project_id": "other-project", "status": "pending"}],
+            "metadatas": [{"project_id": "other-project", "type": "manual_suggestion", "status": "pending"}],
         }
 
         with patch("memos.server.app.ContextMemory", return_value=mock_mem):
@@ -88,12 +88,12 @@ class TestProjectContextMiddleware:
             app = create_unified_app()
             app.state.context_memory = mock_mem
             with TestClient(app) as c:
-                resp = c.post(
-                    "/api/suggestions/sug-id/dismiss",
+                resp = c.delete(
+                    "/api/manual-suggestions/sug-id",
                     params={"project_id": "current-project"},
                 )
                 assert resp.status_code == 404
-                assert "建议不存在" in resp.json()["detail"]
+                assert "用户建议不存在" in resp.json()["detail"]
 
     def test_项目列表跨项目加载(self, client):
         """_get_projects_from_db 豁免：仍可加载所有项目"""

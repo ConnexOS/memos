@@ -127,12 +127,12 @@ class TestPromptManagerNewAPI:
         assert len(t.versions) == 1
 
     def test_ensure_default_template_idempotent(self, manager_with_default):
-        # ensure_default_template 会补齐缺失的 6 个默认/回退模板（v0.4.5 + default@todo-extract）
+        # ensure_default_template 会补齐缺失的 7 个默认/回退模板（含 default@briefing）
         manager_with_default.ensure_default_template()
         count_after_first = len(manager_with_default.templates)
         assert (
-            count_after_first == 7
-        )  # original "default" → "fallback" + 6 created (fallback@extract, fallback@daily-review, default@extract, default@daily-review, default@conflict, default@todo-extract)
+            count_after_first == 8
+        )  # original "default" → "fallback" + 7 created (fallback@extract, fallback@daily-review, default@extract, default@daily-review, default@briefing, default@conflict, default@todo-extract)
         # 再次调用不变
         manager_with_default.ensure_default_template()
         assert len(manager_with_default.templates) == count_after_first

@@ -1,4 +1,4 @@
-# MEMOS — AI 编程助手的长时记忆系统
+# MEMOS — AI 编程助手的记忆伙伴
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -54,14 +54,41 @@ memos server
 
 ### 3. 连接 Claude Code（客户端）
 
+在每台运行 Claude Code 的开发机上，安装轻量客户端并连接到服务端：
+
+>  **同一台机器运行服务端和客户端**：直接 `pip install "memomate[server]"` 即可（已包含客户端），不需要再 `pip install memomate`，但仍需执行 `memos setup` 生成配置。
+
 ```bash
+# 安装客户端（约 3MB，无 ML 依赖）
 pip install memomate
+
+# 一键配置：生成连接配置、Hook、认证文件
 memos setup --server http://<服务器地址>:8000 --token <TOKEN> --project <项目名>
 ```
 
-重新加载 Claude Code，MCP 工具和 Hook 即生效。
+| 参数 | 说明 | 获取方式 |
+|------|------|----------|
+| `--server` | MEMOS 服务端地址 | 服务器 IP，如 `http://192.168.1.100:8000`（同机用 `http://127.0.0.1:8000`） |
+| `--token` | 用户令牌 | `memos server` 首次启动时打印，或服务端执行 `memos user token-regen <用户名>` |
+| `--project` | 项目名称 | 任意名称，如 `MyProject`。用于项目间数据隔离 |
 
-> **Windows 用户**: 如模型下载超时，请在首次启动服务前设置镜像源：
+**`memos setup` 生成的文件：**
+
+| 文件 | 路径 | 用途 |
+|------|------|------|
+| `.memos-project` | 项目根目录 | 项目 ID 映射（可提交到 Git） |
+| `.mcp.json` | 项目根目录 | SSE 连接配置（**不可提交**，含 token；建议加入 `.gitignore`） |
+| `credentials.json` | 用户目录 | 服务器地址 + token（每用户一份） |
+| Hook 配置 | `.claude/settings.json` | 自动采集对话存入 MEMOS |
+
+完成后**重新加载 Claude Code**（重启会话），MCP 工具和 Hook 即生效。
+
+**验证是否成功：**
+- 询问 AI "你有哪些工具" — 应看到 recall、remember 等 memos 工具
+- 或在客户端执行 `memos doctor` 诊断连接状态
+
+> **Windows 用户**：如模型下载超时，请在首次启动服务前设置镜像源：
+>
 > ```powershell
 > $env:HF_ENDPOINT = "https://hf-mirror.com"
 > ```
@@ -81,7 +108,7 @@ graph TB
         HAPI["Hook API (/api/hooks/*)"]
         DASH["Dashboard (/ + /api/*)"]
         AUTH["认证层 (SessionAuthStore)"]
-        ENGINE["引擎 (检索 + 提炼)"]
+        ENGINE["记忆引擎 (检索 + 提炼 + 建议 + 报告)"]
         STORE["(ChromaDB)"]
     end
 

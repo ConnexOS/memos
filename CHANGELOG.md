@@ -1,5 +1,225 @@
 # Changelog
 
+## [0.7.1] — 2026-06-26
+
+### 代号：打磨（Polish）
+
+> v0.7.0「进化」之后的打磨版本。不引入架构级变更，聚焦 TTL 遗忘 + 技术债务清理 + Dashboard UX 优化。
+
+#### Added
+
+- **F1: TTL 遗忘**
+  - SchedulerThread 定时扫描（默认 30 分钟），按类型覆盖过期阈值（task 48h / briefing 24h / lesson 90 天）
+  - `PATCH /api/memories/{id}/restore` 恢复遗忘记忆，重置 `updated_at` 重新计时
+  - 新增 `memory` 配置节（Pydantic model + etc/config.json 惰性加载）
+  - TTL 首次扫描保护：24h 宽限期内仅记录不执行
+
+- **F5: Task 管理**
+  - Task 增加 `pending` 状态，四态流转：`pending → active → completed → archived`
+  - 每条 TASK_EVAL 保存为独立记录，形成可追溯的时间线
+  - Task 面板移至总览组（不再在记忆管理面板展示）
+
+- **F9: SSE 韧性增强**
+  - 60s 空闲主动健康探测
+  - 连续 3 次失败才触发降级（之前 1 次即降级）
+  - 降级后每 10s 周期性重连，成功后切回 SSE
+
+- **简报聚合视图**
+  - 简报历史列表 + 详情 API
+  - 计数注入（task_done/task_todo/new_knowledge/session）
+  - Git 收集器（git log + git diff）作为数据源
+  - 知识型提示词模板替换基础设施模板
+  - 质量门禁 `_has_substance` 内容信号检测
+
+- **配置惰性化**
+  - `get_config()` 替代模块级 `load_config()`，消除导入时副作用
+  - 新增 `memory` 配置节，向前兼容（缺失自动补全）
+
+#### Changed
+
+- **B1: 导航重构**
+  - 5 组 17 子面板：总览 / 对话 / 记忆 / 跟进 / 配置
+  - 一级导航移入顶栏，顶栏精简为 4 项工具
+  - 更名：记忆流 → 事件看板，注入监控 → 监控面板，手工建议 → 用户建议
+  - hash 路由支持 URL 定位二级面板
+
+- **B2: UX 修复**
+  - P5 空状态提示 — 所有面板统一 empty-state 样式
+  - P6 骨架屏 — 统一加载态，替换零散 spinner
+  - P7 时间戳格式切换（relative/absolute + localStorage）
+  - P8 修复 Tab 闪烁（inline script 预置 active 类）
+  - P9 URL hash 二级面板定位
+  - P10 首次加载直接调用首个面板加载函数
+
+- **监控面板**
+  - GET /api/v2/monitor/overview 聚合端点（4 卡片 + 注入时间线 + 指令面板）
+  - 数据源：injected_records + activity_log + list_memories
+
+#### Fixed
+
+- **Dashboard 指令面板 TASK_EVAL 状态**：`task_eval_injected` 改用 `project_id` 判定（之前用 `task_status == "active"` 错误推断）
+- **冷启动文件路径**：统一三处定义为 `get_memos_home()/etc/.cold_start_done_{project_id}`
+- **简报注入**：范围扩至最近 5 天，去除兜底生成路径
+- **UI 多稿修复**：
+  - 记忆管理面板单列全文显示 + 面板独立滚动
+  - 简报工作台标题 h6 字号
+  - 允许注入按钮式 toggle（统一为按钮样式）
+  - 任务模式按钮靠左
+  - 项目切换联动记忆管理面板
+  - 用户建议卡片开关/详情/编辑
+  - 恢复顶栏工具栏图标按钮
+  - 语言切换移至顶部工具栏
+
+#### Removed
+
+- 工具栏时间格式按钮（统一归口到通用设置）
+- `GeneralConfig.timezone` 设置
+- `time_format` 设置（`timeAgo()` 固定为相对时间）
+- 通用设置面板（语言移至工具栏）
+- 旧版简报 prompt 模板
+
+---
+
+## [0.7.0] — 2026-06-20
+
+### 代号：进化
+
+> Dashboard 新旧集成融合 + 质量提升 + 能力完善。系统开始从反馈中学习，用户可以手工提炼知识、遗忘记忆、旧管线遗迹清理干净。
+
+#### Added
+
+- **F5: 记忆元数据治理**
+  - status 三层分离模型：`active` / `forgotten` / `archived`
+  - `inactive_reason` 枚举：`ttl_expired` / `user_archived` / `replaced` / `feedback_negative`
+  - `superseded_by` 引用链支持
+
+- **F6: 记忆管理面板重建**
+  - 基于新 6 类体系的完整 CRUD 面板
+  - 全文展示 + 独立滚动
+  - 手工提炼（D 管线）：选定对话记录 → MEMOS LLM 结构化 → 类型归类
+
+- **F7: 主动遗忘**
+  - 记忆手动遗忘 / 恢复 / 归档
+  - 30 天自动归档（`forgotten` → `archived`）
+
+- **F8: 简报质量策略**
+  - 语义化数据源替换基础设施数据
+  - 质量门控：`_has_substance` 内容信号检测
+  - 三种质量等级：full / simple / none
+
+- **F9: SSE 实时推送**
+  - EventBus 发件箱模式
+  - 前端 EventSource 自动订阅
+  - 降级轮询机制
+
+- **F10: 反馈反哺**
+  - `useful_feedback_count` / `not_useful_feedback_count` → 统一 `reuse_count`
+  - 排序加成：`math.log2(reuse_count + 1) * 0.15`
+  - 建议卡片显示「已被提升 N 次」
+
+- **F11: 提示词管理**
+  - PromptManager + admin-only 管理
+  - `default@briefing` 模板类型
+
+- **F12: 注入监控**
+  - injected_records 文件持久化
+  - Dashboard 注入详情时间线展示
+
+- **F13: 行为引导**
+  - `behavior_guide.json` 独立文件化管理
+  - L3 行为引导文本注入
+
+- **F14: 测试清理**
+  - 全链路集成测试方案（P0-1/P1-1 全部通过）
+  - 46 → 0 测试回归修复
+
+#### Changed
+
+- **F2: Dashboard 导航重构**
+  - 两套 Dashboard 合并为统一 Dashboard
+  - 5 组导航：总览 / 对话 / 记忆 / 跟进 / 配置
+  - 全面更名使命名符合新体系
+
+- **F1: AI 引用检测**
+  - Stop Hook 回检注入的记忆是否被 AI 引用
+  - 引用数据写入 injected_records
+
+- **F3: 旧管线代码清理**
+  - 移除 v0.5.1 时代的三管道建议代码
+  - `_get_layered_context_v2()` → `_build_layered_context()` 统一路径
+
+- **F4: 数据迁移**
+  - `memos migrate types` CLI 命令（dry-run + 执行）
+  - 旧 7 类 → 新 6 类映射迁移
+
+#### Fixed
+
+- `recall(include_archived=True)` 参数错位修复
+- `_migrate_memory_to_suggestion` 覆盖新默认值修复
+- schema 缓存 MD5 哈希策略替代手动删除
+
+#### Removed
+
+- 所有旧 7 类 UI 代码
+- `force_extract()` / `log_complete_turn()` 废弃函数
+- `lock_kb_refresh` / `show_all_facts` 等废弃属性
+
+---
+
+## [0.6.0] — 2026-06-14
+
+### 代号：觉醒
+
+> 新架构的第一次完整落地。五层架构 + 新 6 类知识体系 + Claude Code 主动写记忆。
+
+#### Added
+
+- **五层架构首次落地**
+  - L1 原始记录层：Hook 自动采集 user_input / assistant_output
+  - L2 上下文层：task（会话级四态） / briefing（日频）
+  - L3 知识层：solution / decision / lesson / process — Claude 自写
+  - L4 交互层：todo / manual_suggestion / daily_report
+  - L5 行为层：Dashboard 六面板展示
+
+- **知识类型重构**
+  - 旧 7 类 → 新 6 类体系（solution / decision / lesson / process / task / briefing）
+  - 按层划分生命周期和注入策略
+  - watchlist 独立类型（`remember()` 语义变更）
+
+- **L5 Dashboard v2**
+  - 记忆流面板（recall/写入/注入 三类事件时间线）
+  - 待关注面板（watchlist，30 天未处理自动归档）
+  - 待修正面板（冲突检测 + 4 选项解决 + 批处理）
+  - 活动日志查看
+
+- **MEMOS LLM**
+  - 多端点支持，OpenAI chat/completions 格式
+  - 职责限定：只做结构化加工，不做被动扫描
+  - 简报定时生成 / 兜底生成 / 手工触发
+
+- **管线A 重构**
+  - `remember()` → watchlist 直写 ChromaDB
+  - 缓冲管理（5 轮触发）
+  - LLM 调用 + JSON 三级回退 + 去重
+
+- **活动日志系统**
+  - etc/activity_log_YYYY-MM-DD.jsonl，按天轮转保留 30 天
+  - 记录 recall / 写入 / 注入 三类事件
+
+#### Changed
+
+- 产品定位根本调整：从"人类知识管理"转向"智能体的记忆伙伴"
+- 旧 7 类查询兼容：`type_filter` 参数自动映射到新 6 类
+- `remember()` MCP 工具语义：记忆提炼 → watchlist 写入
+
+#### Fixed
+
+- BM25 索引惰性重建（写入时失效，查询时重建）
+- 项目隔离 ChromaDB where.project_id 过滤
+- 混合检索 BM25 + 向量加权融合正确性
+
+---
+
 ## [0.5.1] - 2026-06-09
 
 ### 统一服务器架构
@@ -205,7 +425,7 @@
   - 建议卡片显示「已被提升 N 次」
 
 - **M6: 源码脱敏**
-  - `LLMEndpoint.api_base` 默认值：`192.168.8.12:8080` → `localhost:11434`
+  - `LLMEndpoint.api_base` 默认值：`<internal-server>:8080` → `localhost:11434`
   - 创建 `etc/config.example.json`（零真实凭据示例配置）
 
 - **M9: CLI 命令精简**

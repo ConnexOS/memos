@@ -37,7 +37,7 @@ def _log_audit(record: dict):
 
 class ChromaDBPersistentStore(VectorStore):
     # ChromaDB 内部异常关键词，匹配到任一即翻译为 ChromaDBError
-    _CHROMA_INTERNAL_ERRORS = ("error finding id", "could not find", "index", "illegal instruction")
+    _CHROMA_INTERNAL_ERRORS = ("error finding id", "could not find", "index already exists", "illegal instruction")
 
     def __init__(self, collection_name: str = None):
         c = config.chroma
@@ -136,10 +136,16 @@ class ChromaDBPersistentStore(VectorStore):
         _log_audit(record)
         self._col_call("delete", ids=ids)
 
+    # 通过 get 计数时的最大加载量（限制全量加载 OOM）
+    _COUNT_MAX_LOAD = 5000
+
     def count(self, where=None) -> int:
         if where is not None:
-            result = self._col_call("get", where=where, include=[])
-            return len(result["ids"])
+            result = self._col_call("get", where=where, include=[], limit=self._COUNT_MAX_LOAD)
+            count = len(result["ids"])
+            if count >= self._COUNT_MAX_LOAD:
+                logger.warning("count(where=...) 结果超限(%d)，返回近似值", count)
+            return count
         return self._col_call("count")
 
     def vacuum(self) -> bool:
@@ -229,7 +235,7 @@ class ChromaDBPersistentStore(VectorStore):
 
 class ChromaDBHttpStore(VectorStore):
     # ChromaDB 内部异常关键词，匹配到任一即翻译为 ChromaDBError
-    _CHROMA_INTERNAL_ERRORS = ("error finding id", "could not find", "index", "illegal instruction")
+    _CHROMA_INTERNAL_ERRORS = ("error finding id", "could not find", "index already exists", "illegal instruction")
 
     def __init__(self, collection_name: str = None):
         c = config.chroma
@@ -313,10 +319,16 @@ class ChromaDBHttpStore(VectorStore):
         _log_audit(record)
         self._col_call("delete", ids=ids)
 
+    # 通过 get 计数时的最大加载量（限制全量加载 OOM）
+    _COUNT_MAX_LOAD = 5000
+
     def count(self, where=None) -> int:
         if where is not None:
-            result = self._col_call("get", where=where, include=[])
-            return len(result["ids"])
+            result = self._col_call("get", where=where, include=[], limit=self._COUNT_MAX_LOAD)
+            count = len(result["ids"])
+            if count >= self._COUNT_MAX_LOAD:
+                logger.warning("count(where=...) 结果超限(%d)，返回近似值", count)
+            return count
         return self._col_call("count")
 
     def vacuum(self) -> bool:

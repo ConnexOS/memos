@@ -62,14 +62,14 @@ _DEFAULT_SYSTEM_PROMPT = """You are a senior technical analyst. Your task is to 
 - "problem": a concise description of the issue or context (what was wrong or what needed to be done).
 - "solution": what exactly was done (code changes, configuration, architecture).
 - "insight": the lesson learned, rationale, or defensive practice adopted.
-- "type": one of "bug_fix", "feature_design", "code_optimize", "tech_knowledge".
+- "type": one of "solution", "decision", "lesson", "process".
 
 **CRITICAL: CORRECT TYPE CLASSIFICATION RULES**
 
-- **bug_fix**: 故障修复 – 已有功能出错、异常报错、逻辑bug、兼容问题、线上问题、环境故障、解析错误、正则匹配失败等一切**对已有缺陷的修复**。
-- **feature_design**: 功能与设计 – **从零开始的新功能开发**、架构设计、业务逻辑规划、方案设计、协议/模型设计。**关键判断标准：对话中描述的是"之前没有，现在需要实现"的新能力，而不是修复已有的错误**。
-- **code_optimize**: 代码优化 – 性能优化、代码精简、规范整改、可读性/健壮性优化（但不包括对功能错误的修复）。
-- **tech_knowledge**: 技术认知 – 语法用法、库/框架使用、工具技巧、开发常识、知识点积累（如提示词工程最佳实践、LLM调用注意事项等）。
+- **solution**: 方案性知识 – 问题解决方案、实现方式、技术选型、架构设计。包含新功能开发和已有缺陷的修复方案。
+- **decision**: 技术决策 – 在多个备选方案中所做的技术选择及其理由、权衡分析。
+- **lesson**: 经验教训 – 从实践中学到的教训、避免的陷阱、最佳实践、防御性编程。
+- **process**: 流程规范 – 操作流程、开发规范、工具使用步骤、标准操作程序。
 
 **CRITICAL: EXTRACTION RULES (to avoid missing content)**
 1. **Do NOT assume any fixed number of cards** – the conversation may yield 0, 1, 2, 3, or more cards.
@@ -92,25 +92,25 @@ _DEFAULT_SYSTEM_PROMPT = """You are a senior technical analyst. Your task is to 
     "problem": "接口调用时报空指针异常，导致服务偶发崩溃",
     "solution": "对上游传入参数增加非空校验，添加异常捕获与默认返回值",
     "insight": "任何外部输入都不可信，必须做防御性编程处理",
-    "type": "bug_fix"
+    "type": "solution"
   },
   {
     "problem": "需要从零实现一个用户登录功能，包括前端界面、后端API和token管理",
     "solution": "设计JWT鉴权流程，后端新增/login端点验证密码并返回token，前端存储token并在后续请求中携带",
     "insight": "新功能开发应优先设计整体流程和接口契约，再分模块实现",
-    "type": "feature_design"
+    "type": "solution"
   },
   {
     "problem": "代码重复率高、命名混乱，性能与可读性较差",
     "solution": "抽取公共方法，统一编码规范，优化循环逻辑提升执行效率",
     "insight": "持续小步优化代码，可显著降低长期维护成本",
-    "type": "code_optimize"
+    "type": "lesson"
   },
   {
         "problem": "不熟悉框架异步任务的正确使用方式",
     "solution": "学习官方文档，编写最小Demo验证用法，封装成通用工具类",
     "insight": "新技术先做最小验证，再集成到业务更安全",
-    "type": "tech_knowledge"
+    "type": "lesson"
   }
 ]
 
@@ -221,6 +221,71 @@ For each todo:
 ]
 
 Now analyze the daily report below and extract actionable todos:"""
+
+
+_DEFAULT_BRIEFING_SYSTEM_PROMPT = """你是一个项目简报生成引擎。
+简报的接收方是 AI 助手——它刚启动新会话，需要重建昨天项目的完整上下文。
+
+根据输入的数据（任务状态、对话记录、Git 日志、已有知识），
+生成结构化 JSON 简报。严格按照以下 Schema 输出，不做额外解释。
+
+{
+  "briefing_date": "YYYY-MM-DD",
+  "quality": "full|simple",
+
+  "task": {
+    "project": "项目名",
+    "goal": "当前目标",
+    "status": "active|completed|pending",
+    "status_label": "进行中|已全部完成|待定（用户未确认）",
+    "progress": {
+      "summary": "如 3/5、7/7",
+      "done": ["已完成项"],
+      "pending": ["待办项"],
+      "blocked": ["阻塞项"]
+    }
+  },
+
+  "achieved": [
+    {"what": "做了什么（一句话）", "detail": "具体说明", "file": "关联文件路径", "type": "feature|bugfix|refactor"}
+  ],
+
+  "file_changes": {
+    "summary": "统计摘要，如 新增2个文件 修改6个文件 +801/-120 行",
+    "uncommitted_changes": "工作区未提交变更的描述（无则为空字符串）",
+    "key_changes": [
+      {"file": "路径", "change_type": "modified|added|deleted",
+       "commit_status": "committed|uncommitted",
+       "purpose": "为什么改这个文件", "key_additions": ["关键新增内容"]}
+    ]
+  },
+
+  "decisions": [
+    {"what": "决策内容", "reason": "选择理由", "excluded": ["被排除的方案"], "exclude_reason": "排除理由"}
+  ],
+
+  "bug_fixes": [
+    {"problem": "问题描述", "root_cause": "根因分析（无明确根因时标注「未在对话中明确」）",
+     "fix": "修复方式", "file": "关联文件", "verified": true, "confidence": "high|medium|low"}
+  ],
+
+  "new_knowledge": ["lesson/process 条目"],
+
+  "suggested_next": {"summary": "一句话建议", "candidates": ["候选方向"]}
+}
+
+约束（必须遵守）：
+1. 输出必须是合法 JSON，不包含 ```json 等 Markdown 标记
+2. 不确定或不存在的内容用空数组 [] 或空字符串 ""，绝不编造
+3. achieved 是工作项级补充，不与 task.progress.done 重复——done 是任务级，achieved 补充细节
+4. decisions 的 excluded 字段记录被否决的方案和理由，这是核心价值
+5. bug_fixes 的 root_cause 必须从对话中有据可查，无明确根因时标注「未在对话中明确」
+6. bug_fixes 的 confidence 根据提取依据判定：根因在对话中明确讨论为 high，有间接证据为 medium，推测为 low
+7. new_knowledge 只包含输入的 lesson/process 数据，不作新增
+8. file_changes 的 summary 统计数字来自 Git log，purpose 来自对话理解
+9. key_changes 的 commit_status 必须根据数据来源区分——来自「Git 日志（已提交）」的为 "committed"，来自「工作区变更（未提交）」的为 "uncommitted"
+10. uncommitted_changes 仅在工作区有未提交变更时填写，否则为空字符串
+"""
 
 
 _DEFAULT_DAILY_REVIEW_PROMPT = """You are a professional development daily report analyst. Your task is to review the conversation records and produce a structured daily development report in **Chinese**. For each conversation session, identify what was accomplished, what decisions were made, what bugs were fixed, and what remains to be done.
@@ -354,32 +419,10 @@ class LLMConfig(BaseModel):
         return LLMEndpoint(name="default")
 
 
-class SystemSuggestionTriggers(BaseModel):
-    """管道二系统状态型建议的触发事件开关。"""
-
-    first_time_user: bool = Field(default=True, description="新用户首次对话（知识库为空）")
-    unrefined_rounds: bool = Field(default=True, description="大量对话未被提炼")
-    low_quality_ratio: bool = Field(default=True, description="低质量记忆占比过高")
-    no_daily_review: bool = Field(default=True, description="缺少日报/日报过期")
-    inactive_project: bool = Field(default=True, description="项目长时间无活动")
-    expired_memories: bool = Field(default=True, description="存在过期记忆未处理")
-
-
-class SystemSuggestionConfig(BaseModel):
-    """管道二系统状态型建议配置。"""
-
-    enabled: bool = Field(default=True, description="管道二全局开关")
-    daily_limit: int = Field(default=3, ge=0, le=10, description="管道二每日推送上限")
-    cooldown_hours: int = Field(default=24, ge=1, le=168, description="同类事件冷却时间（小时）")
-    triggers: SystemSuggestionTriggers = Field(default_factory=SystemSuggestionTriggers, description="各事件独立开关")
-
-
 class SuggestionConfig(BaseModel):
-    """主动建议配置（管道一：知识匹配型 + 管道三：手工建议）。
+    """上下文注入 + 用户建议匹配配置。
 
-    控制分层检索中 Layer 2（相似度 ≥ active_suggestion_threshold 的建议推送）、
-    Layer 1（相似度 ≥ context_injection_threshold 的上下文注入）以及手工建议的行为。
-    """
+    控制分层检索中的上下文注入阈值、用户建议匹配行为。"""
 
     enable_active_suggestions: bool = Field(default=True, description="主动推送全局开关")
     active_suggestion_threshold: float = Field(
@@ -431,7 +474,7 @@ class SuggestionConfig(BaseModel):
         default=5,
         ge=0,
         le=20,
-        description="[已废弃] 管道三（手工建议）每日推送上限，由 max_injection_per_round 替代",
+        description="[已废弃] 管道三（用户建议）每日推送上限，由 max_injection_per_round 替代",
     )
     max_injection_per_round: int = Field(
         default=5,
@@ -463,6 +506,8 @@ class SuggestionConfig(BaseModel):
 class MemoryConfig(BaseModel):
     """核心记忆管理配置（检索、去重、质量、冲突、复用频率加成）。"""
 
+    model_config = {"extra": "ignore"}
+
     decay_lambda: float = Field(
         default=0.02,
         ge=0.0,
@@ -486,8 +531,8 @@ class MemoryConfig(BaseModel):
         description="检索默认返回条数",
     )
     default_type: str = Field(
-        default="fact",
-        description="新建记忆的默认类型（fact/decision/preference/todo）",
+        default="solution",
+        description="新建记忆的默认类型（新 6 类体系）",
     )
     archive_days: int = Field(
         default=90,
@@ -551,7 +596,7 @@ class MemoryConfig(BaseModel):
     )
     default_status: str = Field(
         default="active",
-        description="新建记忆默认状态（active/archived）",
+        description="新建记忆默认状态（active/forgotten/archived）",
     )
     daily_review_chunk_tokens: int = Field(
         default=12000,
@@ -566,6 +611,19 @@ class MemoryConfig(BaseModel):
         description="每日回顾分片最大轮次数（作为 token 分片的补充上限）",
     )
 
+    # --- v0.7.1 新增字段 ---
+    ttl_enabled: bool = Field(default=True)
+    ttl_default_expire_hours: int = Field(default=720, ge=1)
+    ttl_type_overrides: dict = Field(
+        default_factory=lambda: {
+            "task": 48, "briefing": 24,
+            "solution": 0, "decision": 0,
+            "lesson": 2160, "process": 0,
+        }
+    )
+    ttl_scan_batch_size: int = Field(default=100, ge=10, le=1000)
+    ttl_first_scan_grace_hours: int = Field(default=24, ge=0)
+
     @model_validator(mode="after")
     def _validate_conflict_threshold(self):
         """冲突检测阈值必须大于去重阈值（冲突语义是"高度相似才检测矛盾"）。"""
@@ -576,16 +634,6 @@ class MemoryConfig(BaseModel):
                 f"冲突检测用于高度相似时才检查矛盾，去重用于低度相似即判定重复。"
             )
         return self
-
-
-class BufferConfig(BaseModel):
-    max_tokens: int = 3000
-    truncate_target: int = 2500
-    trigger_rounds: int = 5
-    rate_limit_seconds: int = 30
-    token_ratio: float = 0.75
-    async_mode: bool = True
-    subprocess_timeout: int = 300
 
 
 class DashboardConfig(BaseModel):
@@ -642,6 +690,32 @@ class NotificationConfig(BaseModel):
 
     retention_days: int = 30
     rate_limit_minutes: int = 60
+
+
+class MemoryTypeItem(BaseModel):
+    """单类型配置项（v0.6.0 新增）。"""
+
+    enabled: bool = True
+    priority: int = 5
+    expire_hours: int = 0  # 0=不自动过期
+
+
+class MemoryTypesConfig(BaseModel):
+    """L2/L3 类型配置：注入开关/优先级/过期时间（v0.6.0 新增）。"""
+
+    task: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=10, expire_hours=0))
+    briefing: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=8, expire_hours=24))
+    solution: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=5))
+    decision: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=5))
+    lesson: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=3))
+    process: MemoryTypeItem = Field(default_factory=lambda: MemoryTypeItem(priority=3))
+
+
+class ActivityLogConfig(BaseModel):
+    """活动日志配置（v0.6.0 新增）。"""
+
+    retention_days: int = Field(default=30, ge=1, description="日志保留天数")
+    log_path: str = Field(default="", description="日志存储路径，空=etc/")
 
 
 class AgentConfig(BaseModel):

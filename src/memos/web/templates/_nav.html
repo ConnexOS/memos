@@ -1,36 +1,68 @@
-<nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3">
-    <div class="container-fluid">
-        <a class="navbar-brand mb-0 h6 text-decoration-none" href="/"><i class="bi bi-database-gear me-2"></i>MEMOS</a>
-        <div class="d-flex align-items-center gap-3">
+<nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-2">
+    <div class="d-flex align-items-center w-100">
+        <!-- Logo -->
+        <div class="d-flex align-items-center" style="flex:1">
+            <a class="navbar-brand mb-0 h6 text-decoration-none" href="/">
+                <i class="bi bi-database-gear me-1"></i>MEMOS
+            </a>
+        </div>
+
+        <!-- 居中一级导航 -->
+        <ul class="nav nav-pills nav-group-tabs justify-content-center" id="groupTabs" style="flex:2">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="tab-overview" data-group="overview" type="button" role="tab">
+                    <i class="bi bi-speedometer2"></i><span class="d-none d-md-inline ms-1">总览</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-conversation" data-group="conversation" type="button" role="tab">
+                    <i class="bi bi-chat-dots"></i><span class="d-none d-md-inline ms-1">对话</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-memory" data-group="memory" type="button" role="tab">
+                    <i class="bi bi-database"></i><span class="d-none d-md-inline ms-1">记忆</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-followup" data-group="followup" type="button" role="tab">
+                    <i class="bi bi-check2-square"></i><span class="d-none d-md-inline ms-1">跟进</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="tab-settings" data-group="settings" type="button" role="tab">
+                    <i class="bi bi-gear"></i><span class="d-none d-md-inline ms-1">配置</span>
+                </button>
+            </li>
+        </ul>
+
+        <!-- 右侧精简工具 -->
+        <div class="d-flex align-items-center justify-content-end gap-2" style="flex:1">
             <span id="kb-source-badge" style="display:none"></span>
+
+            <!-- 备份 -->
             <span id="backup-status-text" class="small text-secondary" style="display:none;cursor:pointer" title="点击查看备份管理" onclick="openBackupManager()"></span>
             <button id="backup-btn" class="btn btn-sm btn-outline-info py-0" title="立即备份" onclick="triggerBackup()">
-                <i class="bi bi-cloud-arrow-up"></i> 备份
+                <i class="bi bi-cloud-arrow-up"></i>
             </button>
-            <span id="status-indicator" class="d-flex align-items-center gap-1 small">
-                <span class="status-dot offline" id="status-dot"></span>
-                <span id="status-text">检测中...</span>
-            </span>
-            <select id="project-selector" class="form-select form-select-sm" style="width:auto;max-width:280px;">
+
+            <!-- 项目选择 + 管理 -->
+            <select id="project-selector" class="form-select form-select-sm" style="width:auto;max-width:200px;">
                 <option value="">加载中...</option>
             </select>
             <button id="project-mgmt-btn" class="btn btn-sm btn-outline-info py-0" title="项目管理" onclick="openProjectManager()">
-                <i class="bi bi-diagram-2"></i> 管理
+                <i class="bi bi-diagram-2"></i>
             </button>
-            <span class="small text-secondary" id="kb-count-label"></span>
-
-            <!-- 通知中心（纯 CSS dropdown） -->
+            <!-- 通知中心 -->
             <div class="dropdown v42-notif-bell">
-                <a href="#" class="dropdown-toggle text-decoration-none small text-secondary position-relative" data-bs-toggle="dropdown" aria-expanded="false">
+                <a href="#" class="dropdown-toggle text-decoration-none small text-secondary position-relative" data-bs-toggle="dropdown">
                     <i class="bi bi-bell"></i>
                     {% set total_unread = notifications.unread.total if notifications else 0 %}
                     {% if total_unread > 0 %}
-                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size:0.6rem;">
-                        {{ total_unread }}
-                    </span>
+                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size:0.6rem;">{{ total_unread }}</span>
                     {% endif %}
                 </a>
-                <div class="dropdown-menu dropdown-menu-end p-2" style="min-width:320px;max-height:400px;overflow-y:auto;">
+                <div class="dropdown-menu dropdown-menu-end p-2" style="min-width:320px;max-height:400px;overflow:hidden auto;">
                     <div class="d-flex gap-2 mb-2 small">
                         <span class="badge bg-info bg-opacity-25 text-info">提炼 {{ notifications.unread.extract_complete if notifications else 0 }}</span>
                         <span class="badge bg-warning bg-opacity-25 text-warning">冲突 {{ notifications.unread.conflict_detected if notifications else 0 }}</span>
@@ -57,17 +89,23 @@
                     <a href="/notifications" class="dropdown-item small text-center text-primary">查看全部通知 →</a>
                 </div>
             </div>
-
+            <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="modal" data-bs-target="#settingsModal" title="系统设置">
+                <i class="bi bi-gear"></i>
+            </button>
             <button class="btn btn-sm btn-outline-secondary py-0" id="lang-switch" title="切换语言">
                 <i class="bi bi-translate"></i>
             </button>
-            <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="modal" data-bs-target="#settingsModal" title="设置">
-                <i class="bi bi-gear"></i>
-            </button>
+            <!-- 系统状态指示器 -->
+            <span id="sys-status-indicator" class="d-inline-flex align-items-center" title="加载中..." style="cursor:pointer;">
+                <i class="bi bi-cpu" style="font-size:1rem;"></i>
+            </span>
+            <span id="llm-status-indicator" class="d-inline-flex align-items-center me-1" title="加载中..." style="cursor:pointer;">
+                <i class="bi bi-robot" style="font-size:1rem;"></i>
+            </span>
             {% if user_name %}
-            <span class="small text-secondary me-2">{{ user_name }}</span>
+            <span class="small text-secondary me-1">{{ user_name }}</span>
             {% endif %}
-            <button class="btn btn-sm btn-outline-danger py-0" id="logout-btn" title="退出登录" onclick="handleLogout()">
+            <button class="btn btn-sm btn-outline-danger py-0" id="logout-btn" title="退出" onclick="handleLogout()">
                 <i class="bi bi-box-arrow-right"></i>
             </button>
         </div>

@@ -118,9 +118,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
         data_end = data_start + 86400
         briefing_date = date
         data_date_label = date
-        logger.info("[简报] 按指定日期生成: %s (范围 %s ~ %s)", date,
-                    datetime.fromtimestamp(data_start, ZoneInfo(tz_str)).strftime("%H:%M"),
-                    datetime.fromtimestamp(data_end, ZoneInfo(tz_str)).strftime("%H:%M"))
+        logger.info("[简报] 按指定日期生成: %s (范围 00:00 ~ 24:00)", date)
     else:
         # 默认/今日 → [今日 00:00, now]
         today_dt = datetime(now.year, now.month, now.day, tzinfo=ZoneInfo(tz_str))

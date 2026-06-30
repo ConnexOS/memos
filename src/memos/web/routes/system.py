@@ -11,7 +11,7 @@ from ...config import config
 from ..app import _get_projects_from_db, _invalidate_projects_cache
 from ..dependencies import get_project_id
 from ..services.helpers import _calc_db_size, _get_llama_status
-from ..utils import detect_project_id
+from ..utils import detect_project_id, run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -207,65 +207,68 @@ async def resolve_conflict(request: Request, pair_id: str, action: str = ""):
         if not content:
             raise HTTPException(400, "edit 操作需要提供 content")
 
-    mem = request.app.state.context_memory
-    new_mem, existing_mem = _get_conflict_pair(request, pair_id)
-    new_meta = new_mem.get("metadata", {})
+    def _sync():
+        mem = request.app.state.context_memory
+        new_mem, existing_mem = _get_conflict_pair(request, pair_id)
+        new_meta = new_mem.get("metadata", {})
 
-    if action == "overwrite":
-        # 删除旧记忆
-        mem.delete_memory(existing_mem["id"])
-        # 清除新记忆的冲突标记
-        mem.update_memory(
-            pair_id,
-            new_metadata={
+        if action == "overwrite":
+            # 删除旧记忆
+            mem.delete_memory(existing_mem["id"])
+            # 清除新记忆的冲突标记
+            mem.update_memory(
+                pair_id,
+                new_metadata={
+                    "conflict_status": "resolved",
+                    "conflict_role": "",
+                    "conflict_with": "",
+                    "conflict_reason": "",
+                    "conflict_resolved_at": time_mod.time(),
+                    "conflict_resolution": "overwrite",
+                },
+            )
+        elif action == "keep_both":
+            # 清除双方冲突标记
+            clear_meta = {
                 "conflict_status": "resolved",
                 "conflict_role": "",
                 "conflict_with": "",
                 "conflict_reason": "",
                 "conflict_resolved_at": time_mod.time(),
-                "conflict_resolution": "overwrite",
-            },
-        )
-    elif action == "keep_both":
-        # 清除双方冲突标记
-        clear_meta = {
-            "conflict_status": "resolved",
-            "conflict_role": "",
-            "conflict_with": "",
-            "conflict_reason": "",
-            "conflict_resolved_at": time_mod.time(),
-            "conflict_resolution": "keep_both",
-        }
-        mem.update_memory(pair_id, new_metadata=clear_meta)
-        mem.update_memory(existing_mem["id"], new_metadata=clear_meta)
-    elif action == "edit":
-        # 更新新记忆内容 + 清除冲突标记
-        mem.update_memory(
+                "conflict_resolution": "keep_both",
+            }
+            mem.update_memory(pair_id, new_metadata=clear_meta)
+            mem.update_memory(existing_mem["id"], new_metadata=clear_meta)
+        elif action == "edit":
+            # 更新新记忆内容 + 清除冲突标记
+            mem.update_memory(
+                pair_id,
+                new_content=content.strip(),
+                new_metadata={
+                    "conflict_status": "resolved",
+                    "conflict_role": "",
+                    "conflict_with": "",
+                    "conflict_reason": "",
+                    "conflict_resolved_at": time_mod.time(),
+                    "conflict_resolution": "edit",
+                },
+            )
+
+        # 写入冲突日志
+        _write_conflict_log(
+            mem,
             pair_id,
-            new_content=content.strip(),
-            new_metadata={
-                "conflict_status": "resolved",
-                "conflict_role": "",
-                "conflict_with": "",
-                "conflict_reason": "",
-                "conflict_resolved_at": time_mod.time(),
-                "conflict_resolution": "edit",
-            },
+            new_mem.get("document", ""),
+            existing_mem.get("document", ""),
+            new_meta.get("conflict_reason", ""),
+            new_meta.get("conflict_similarity", 0),
+            action,
         )
 
-    # 写入冲突日志
-    _write_conflict_log(
-        mem,
-        pair_id,
-        new_mem.get("document", ""),
-        existing_mem.get("document", ""),
-        new_meta.get("conflict_reason", ""),
-        new_meta.get("conflict_similarity", 0),
-        action,
-    )
+        logger.info("冲突已解决 id=%s action=%s", pair_id[:8], action)
+        return {"message": f"冲突已通过「{action}」解决"}
 
-    logger.info("冲突已解决 id=%s action=%s", pair_id[:8], action)
-    return {"message": f"冲突已通过「{action}」解决"}
+    return await run_sync(_sync)
 
 
 @router.post("/api/conflicts/{pair_id}/discard")
@@ -560,19 +563,24 @@ def delete_project(project_id: str, request: Request):
 async def system_status(request: Request):
     mem = request.app.state.context_memory
     llama_ok = await _get_llama_status()
-    try:
-        total = mem.store.count()
-    except Exception:
-        total = 0
-    db_size_mb = _calc_db_size()
-    # v0.4.0 HIGH-3: 增加活跃/已删除统计 + 更正 model_name 数据源
-    try:
-        stats = mem._get_deleted_stats()
-        active_count = stats["active"]
-        deleted_count = stats["deleted"]
-    except Exception:
-        active_count = total
-        deleted_count = 0
+
+    def _sync():
+        try:
+            total = mem.store.count()
+        except Exception:
+            total = 0
+        db_size_mb = _calc_db_size()
+        # v0.4.0 HIGH-3: 增加活跃/已删除统计 + 更正 model_name 数据源
+        try:
+            stats = mem._get_deleted_stats()
+            active_count = stats["active"]
+            deleted_count = stats["deleted"]
+        except Exception:
+            active_count = total
+            deleted_count = 0
+        return total, db_size_mb, active_count, deleted_count
+
+    total, db_size_mb, active_count, deleted_count = await run_sync(_sync)
     return {
         "llama_server_ok": llama_ok,
         "total_memories": total,

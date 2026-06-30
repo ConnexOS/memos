@@ -1,41 +1,186 @@
 {
   "chroma": {
-    "mode": "persistent",
-    "path": "./memdb",
-    "host": "localhost",
-    "port": 8001,
+    "path": "D:\\DevSpace\\MEMOS\\memdb",
     "collection_name": "project_memory",
-    "timeout": 30
+    "timeout": 60
   },
   "model": {
+    "path": "D:\\DevSpace\\MEMOS\\model\\bge-large-zh-v1.5",
     "name": "bge-large-zh-v1.5",
     "vector_dim": 1024,
     "download_retries": 3,
-    "download_timeout": 600
+    "download_timeout": 600,
+    "verify_sha256": false
   },
   "llm": {
     "endpoints": [
       {
-        "name": "default",
+        "name": "local-LLM",
         "api_base": "http://localhost:11434/v1",
         "api_key": "",
-        "model": ""
+        "model": "gemma-4-12B-it-qat-UD-Q4_K_XL",
+        "prompt_templates": {}
+      },
+      {
+        "name": "modelscope",
+        "api_base": "http://localhost:11434/v1",
+        "api_key": "",
+        "model": "deepseek-ai/DeepSeek-V4-Flash",
+        "prompt_templates": {}
+      },
+      {
+        "name": "deepseek-ai",
+        "api_base": "http://localhost:11434/v1",
+        "api_key": "",
+        "model": "deepseek-v4-flash",
+        "prompt_templates": {}
       }
     ],
-    "active": "default",
+    "active": "deepseek-ai",
     "temperature": 0.1,
     "max_tokens": 2048,
-    "request_timeout": 600
+    "request_timeout": 600,
+    "max_retries": 3,
+    "retry_base_delay": 1.0,
+    "stop": [
+      "<|im_end|>"
+    ],
+    "api_key": "your-api-key-here"
   },
   "memory": {
     "decay_lambda": 0.02,
     "similarity_threshold": 0.55,
-    "default_top_k": 5
+    "dedup_top_k": 1,
+    "default_top_k": 5,
+    "default_type": "fact",
+    "archive_days": 90,
+    "rerank_multiplier": 3,
+    "rerank_min_candidates": 30,
+    "quality_threshold": 0.5,
+    "conflict_detection_enabled": true,
+    "conflict_distance_threshold": 0.85,
+    "conflict_use_llm": true,
+    "daily_todo_time": "18:00",
+    "expiry_warn_days": 30,
+    "reuse_weight": 0.1,
+    "reuse_decay": 0.01,
+    "reuse_boost_cap": 0.5,
+    "default_status": "active",
+    "daily_review_chunk_tokens": 12000,
+    "daily_review_chunk_rounds": 30,
+    "ttl_enabled": true,
+    "ttl_default_expire_hours": 720,
+    "ttl_type_overrides": {
+      "task": 48,
+      "briefing": 24,
+      "solution": 0,
+      "decision": 0,
+      "lesson": 2160,
+      "process": 0
+    },
+    "ttl_scan_batch_size": 100,
+    "ttl_first_scan_grace_hours": 24
   },
-  "buffer": {},
-  "dashboard": {},
-  "server": {},
+  "suggestion": {
+    "enable_active_suggestions": true,
+    "active_suggestion_threshold": 0.65,
+    "context_injection_threshold": 0.5,
+    "context_max_items": 3,
+    "suggestion_cooldown_minutes": 30,
+    "suggestion_max_per_day": 10,
+    "suggestion_expiry_days": 7,
+    "suggestion_max_pending": 50,
+    "suggestion_display_limit": 20,
+    "suggestion_manual_daily_limit": 5,
+    "max_injection_per_round": 5
+  },
+  "dashboard": {
+    "locale": "zh",
+    "status_cache_ttl": 30,
+    "projects_cache_ttl": 30,
+    "health_check_timeout": 10,
+    "test_connection_timeout": 5,
+    "search_default_top_k": 5,
+    "search_top_k_max": 50,
+    "search_default_decay": 0.02,
+    "search_default_bm25_weight": 0.7,
+    "list_default_limit": 20,
+    "list_limit_max": 100
+  },
+  "server": {
+    "id_length": 8,
+    "mcp_top_k_max": 20,
+    "response_truncate_length": 100,
+    "mode": "unified",
+    "host": "127.0.0.1",
+    "port": 8000
+  },
   "auth": {
-    "disable": false
+    "disable": true,
+    "token_hash": "",
+    "secret_key": "",
+    "session_ttl": 86400
+  },
+  "backup": {
+    "target_dir": "backups",
+    "max_backups": 10,
+    "remind_after_days": 7,
+    "verify_after_backup": true
+  },
+  "notification": {
+    "retention_days": 30,
+    "rate_limit_minutes": 60
+  },
+  "agent": {
+    "enabled": true,
+    "pattern_detection_enabled": true,
+    "daily_briefing_enabled": true,
+    "daily_briefing_time": "09:00",
+    "topic_cluster_window_days": 7,
+    "recurrence_threshold": 3,
+    "bug_match_similarity": 0.7,
+    "max_daily_briefing_items": 3,
+    "briefing_cooldown_hours": 24,
+    "signal_cooldown_hours": 6,
+    "max_active_signals": 5
+  },
+  "hook_proxy": {
+    "timeout": 60
+  },
+  "memory_types": {
+    "task": {
+      "enabled": true,
+      "priority": 10,
+      "expire_hours": 0
+    },
+    "briefing": {
+      "enabled": true,
+      "priority": 8,
+      "expire_hours": 24
+    },
+    "solution": {
+      "enabled": true,
+      "priority": 5,
+      "expire_hours": 0
+    },
+    "decision": {
+      "enabled": true,
+      "priority": 5,
+      "expire_hours": 0
+    },
+    "lesson": {
+      "enabled": true,
+      "priority": 3,
+      "expire_hours": 0
+    },
+    "process": {
+      "enabled": true,
+      "priority": 3,
+      "expire_hours": 0
+    }
+  },
+  "activity_log": {
+    "retention_days": 30,
+    "log_path": ""
   }
 }

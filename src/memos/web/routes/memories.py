@@ -21,6 +21,7 @@ from ..models import (
     CreateMemoryRequest,
     UpdateMemoryRequest,
 )
+from ..utils import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +218,7 @@ async def import_memories_api(
     if len(raw_bytes) > max_import_bytes:
         raise HTTPException(413, f"导入文件过大（{len(raw_bytes) / 1024 / 1024:.1f}MB），上限 50MB，请拆分后重试")
     lines = raw_bytes.decode("utf-8").splitlines()
-    result = mem.import_memories(lines, target_project_id=pid, strategy=strategy)
+    result = await run_sync(mem.import_memories, lines, target_project_id=pid, strategy=strategy)
     return result
 
 

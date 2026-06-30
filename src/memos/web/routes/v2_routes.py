@@ -15,6 +15,7 @@ from ...config import config
 from ...errors import ChromaDBError
 from ...features.event_bus import touch_event
 from ..dependencies import get_project_id
+from ..utils import run_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -140,7 +141,7 @@ async def get_watchlist(
 ):
     """获取待关注列表（ChromaDB type=watchlist AND processed=false）。"""
     mem = _get_memory(request)
-    results = mem.list_memories(type_filter="watchlist", limit=page_size, offset=(page - 1) * page_size)
+    results = await run_sync(mem.list_memories, type_filter="watchlist", limit=page_size, offset=(page - 1) * page_size)
 
     now = time.time()
     archived_count = 0
@@ -149,7 +150,7 @@ async def get_watchlist(
         created_at = meta.get("timestamp", 0)
         # F5: 使用 status 替代 archived bool
         if created_at > 0 and now - created_at > 30 * 86400 and meta.get("status", "active") != "archived":
-            mem.update_memory(item["id"], new_metadata={"status": "archived"})
+            await run_sync(mem.update_memory, item["id"], new_metadata={"status": "archived"})
             archived_count += 1
 
     return JSONResponse({
@@ -232,7 +233,7 @@ async def watchlist_to_knowledge(memory_id: str, request: Request):
         return JSONResponse({"error": "无效类型，可选: solution/decision/lesson/process"}, status_code=400)
 
     mem = _get_memory(request)
-    existing = mem.get_memory(memory_id)
+    existing = await run_sync(mem.get_memory, memory_id)
     if existing is None:
         return JSONResponse({"error": "记忆不存在"}, status_code=404)
 
@@ -244,9 +245,9 @@ async def watchlist_to_knowledge(memory_id: str, request: Request):
         "project_id": meta.get("project_id", ""),
         "timestamp": time.time(),
     }
-    new_id = mem.remember(text, metadata=new_meta)
+    new_id = await run_sync(mem.remember, text, metadata=new_meta)
     if new_id:
-        mem.update_memory(memory_id, new_metadata={"processed": True, "processed_at": time.time()})
+        await run_sync(mem.update_memory, memory_id, new_metadata={"processed": True, "processed_at": time.time()})
 
     return JSONResponse({"id": new_id, "status": "converted"})
 
@@ -254,10 +255,10 @@ async def watchlist_to_knowledge(memory_id: str, request: Request):
 @router.post("/api/v2/watchlist/{memory_id}/ignore")
 async def watchlist_ignore(memory_id: str, request: Request):
     mem = _get_memory(request)
-    existing = mem.get_memory(memory_id)
+    existing = await run_sync(mem.get_memory, memory_id)
     if existing is None:
         return JSONResponse({"error": "记忆不存在"}, status_code=404)
-    mem.update_memory(memory_id, new_metadata={"processed": True, "processed_at": time.time()})
+    await run_sync(mem.update_memory, memory_id, new_metadata={"processed": True, "processed_at": time.time()})
     return JSONResponse({"status": "ignored"})
 
 
@@ -266,12 +267,12 @@ async def watchlist_note(memory_id: str, request: Request):
     body = await request.json()
     note = body.get("note", "")
     mem = _get_memory(request)
-    existing = mem.get_memory(memory_id)
+    existing = await run_sync(mem.get_memory, memory_id)
     if existing is None:
         return JSONResponse({"error": "记忆不存在"}, status_code=404)
     old_meta = existing.get("metadata", {})
     old_meta["note"] = note
-    mem.update_memory(memory_id, new_metadata=old_meta)
+    await run_sync(mem.update_memory, memory_id, new_metadata=old_meta)
     return JSONResponse({"status": "noted"})
 
 
@@ -279,7 +280,7 @@ async def watchlist_note(memory_id: str, request: Request):
 async def get_current_task(request: Request):
     """获取当前 active task（按 updated_at 倒序取最新）。"""
     mem = _get_memory(request)
-    results = mem.list_memories(type_filter="task", limit=1)
+    results = await run_sync(mem.list_memories, type_filter="task", limit=1)
     if not results:
         return JSONResponse({"task": None, "message": "上次会话未记录 task"})
 
@@ -302,7 +303,7 @@ async def list_tasks(
 ):
     """获取 task 列表（含活跃/已完成/已暂停分类），支持按状态筛选。"""
     mem = _get_memory(request)
-    results = mem.list_memories(type_filter="task", project_id=project_id, limit=limit, offset=offset)
+    results = await run_sync(mem.list_memories, type_filter="task", project_id=project_id, limit=limit, offset=offset)
 
     # 按 status 分组（v0.7.1: 增加 pending 分组）
     active = []
@@ -357,7 +358,7 @@ async def list_tasks(
 async def update_task(task_id: str, body: dict, request: Request):
     """编辑 task 内容。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
@@ -369,7 +370,7 @@ async def update_task(task_id: str, body: dict, request: Request):
     if "context" in body:
         meta_update["context"] = body["context"]
     update_kwargs["metadatas"] = [meta_update]
-    mem.store.update(**update_kwargs)
+    await run_sync(mem.store.update, **update_kwargs)
     touch_event("task")
     return {"ok": True}
 
@@ -378,12 +379,12 @@ async def update_task(task_id: str, body: dict, request: Request):
 async def pause_task(task_id: str, request: Request):
     """暂停 task。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
-    mem.store.update(ids=[task_id], metadatas=[{"paused": True, "updated_at": time.time()}])
+    await run_sync(mem.store.update, ids=[task_id], metadatas=[{"paused": True, "updated_at": time.time()}])
     touch_event("task")
     return {"ok": True, "status": "paused"}
 
@@ -392,14 +393,14 @@ async def pause_task(task_id: str, request: Request):
 async def resume_task(task_id: str, request: Request):
     """恢复 task（同时承担 reopen 职责：completed→active 同样适用）。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
     current_status = item.get("metadata", {}).get("status", "active")
     logger.info("resume task %s from status=%s", task_id[:8], current_status)
-    mem.store.update(ids=[task_id], metadatas=[{"paused": False, "status": "active", "updated_at": time.time()}])
+    await run_sync(mem.store.update, ids=[task_id], metadatas=[{"paused": False, "status": "active", "updated_at": time.time()}])
     touch_event("task")
     return {"ok": True, "status": "active"}
 
@@ -408,12 +409,12 @@ async def resume_task(task_id: str, request: Request):
 async def complete_task(task_id: str, request: Request):
     """标记 task 为已完成。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
-    mem.store.update(ids=[task_id], metadatas=[{
+    await run_sync(mem.store.update, ids=[task_id], metadatas=[{
         "status": "completed", "paused": False, "updated_at": time.time(),
     }])
     touch_event("task")
@@ -424,12 +425,12 @@ async def complete_task(task_id: str, request: Request):
 async def archive_task(task_id: str, request: Request):
     """归档 task。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
-    mem.archive_memory(task_id)
+    await run_sync(mem.archive_memory, task_id)
     touch_event("task")
     return {"ok": True, "status": "archived"}
 
@@ -438,12 +439,12 @@ async def archive_task(task_id: str, request: Request):
 async def delete_task(task_id: str, request: Request):
     """删除 task。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
-    mem.store.delete(ids=[task_id])
+    await run_sync(mem.store.delete, ids=[task_id])
     touch_event("task")
     return {"ok": True}
 
@@ -452,24 +453,24 @@ async def delete_task(task_id: str, request: Request):
 async def activate_task(task_id: str, request: Request, project_id: str = Depends(get_project_id)):
     """激活指定 task（设为 active），原活跃 task 自动 completed。"""
     mem = _get_memory(request)
-    item = mem.get_memory(task_id)
+    item = await run_sync(mem.get_memory, task_id)
     if not item:
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
 
     # 1. 原活跃 task → completed
-    active_tasks = mem.store.get(
+    active_tasks = await run_sync(mem.store.get,
         where={"$and": [{"type": "task"}, {"status": "active"}, {"project_id": project_id}]}
     )
     for tid in active_tasks.get("ids", []):
         if tid != task_id:
-            mem.store.update(ids=[tid], metadatas=[
+            await run_sync(mem.store.update, ids=[tid], metadatas=[
                 {"status": "completed", "paused": False, "updated_at": time.time()}
             ])
 
     # 2. 目标 task → active
-    mem.store.update(ids=[task_id], metadatas=[
+    await run_sync(mem.store.update, ids=[task_id], metadatas=[
         {"status": "active", "paused": False, "updated_at": time.time()}
     ])
     touch_event("task")
@@ -522,7 +523,7 @@ async def get_review_list(
 ):
     """获取待修正条目。"""
     mem = _get_memory(request)
-    results = mem.list_memories(
+    results = await run_sync(mem.list_memories,
         type_filter=type or None,
         limit=page_size,
         offset=(page - 1) * page_size,
@@ -585,7 +586,7 @@ async def get_current_briefing(
     if date:
         # 精确匹配指定日期
         target_date = date
-        briefings = mem.list_memories(type_filter="briefing", project_id=project_id, limit=10)
+        briefings = await run_sync(mem.list_memories, type_filter="briefing", project_id=project_id, limit=10)
         for b in briefings:
             meta = b.get("metadata", {})
             if meta.get("briefing_date") == target_date:
@@ -595,7 +596,7 @@ async def get_current_briefing(
         # 取最近5天最新简报
         today = now.strftime("%Y-%m-%d")
         five_days_ago = (now - timedelta(days=5)).strftime("%Y-%m-%d")
-        briefings = mem.list_memories(type_filter="briefing", project_id=project_id, limit=10)
+        briefings = await run_sync(mem.list_memories, type_filter="briefing", project_id=project_id, limit=10)
         candidates = []
         for b in briefings:
             meta = b.get("metadata", {})
@@ -625,7 +626,7 @@ async def list_briefing_history(
         since_date: 起始日期 "YYYY-MM-DD"，按 briefing_date >= since_date 过滤
     """
     mem = _get_memory(request)
-    all_raw = mem.list_memories(type_filter="briefing", project_id=project_id, limit=500)
+    all_raw = await run_sync(mem.list_memories, type_filter="briefing", project_id=project_id, limit=500)
     filtered = []
     for b in all_raw:
         meta = b.get("metadata", {})
@@ -660,7 +661,7 @@ async def list_briefing_history(
 async def get_briefing_detail(briefing_id: str, request: Request, project_id: str = Depends(get_project_id)):
     """获取单条简报完整内容（含 content 对象）。"""
     mem = _get_memory(request)
-    result = mem.store.get(ids=[briefing_id], include=["metadatas", "documents"])
+    result = await run_sync(mem.store.get, ids=[briefing_id], include=["metadatas", "documents"])
     if not result or not result.get("ids"):
         return JSONResponse({"error": "not_found"}, status_code=404)
     meta = result["metadatas"][0]
@@ -684,7 +685,7 @@ async def delete_briefing(briefing_id: str, request: Request, project_id: str = 
     """删除指定简报记录。"""
     mem = _get_memory(request)
     try:
-        mem.delete_memory(briefing_id)
+        await run_sync(mem.delete_memory, briefing_id)
         return JSONResponse({"status": "deleted"})
     except Exception as e:
         logger.error("删除简报失败: %s", e)
@@ -834,7 +835,7 @@ async def restore_memory_endpoint(memory_id: str, request: Request):
     """恢复已遗忘记忆为 active 状态，重置 updated_at。"""
     mem = request.app.state.context_memory
     try:
-        mem.restore_memory(memory_id)
+        await run_sync(mem.restore_memory, memory_id)
         updated_at = time.time()
         return {"ok": True, "status": "active", "updated_at": updated_at}
     except ChromaDBError as e:
@@ -846,183 +847,212 @@ async def restore_memory_endpoint(memory_id: str, request: Request):
 @router.get("/api/v2/monitor/overview")
 async def monitor_overview(request: Request, project_id: str = ""):
     """聚合监控面板数据：4 卡片状态 + 注入详情 + 指令面板。"""
-    from ...config.models import get_memos_home
-    from ...features.activity_log import read_events
 
-    mem = request.app.state.context_memory
+    def _sync():
+        nonlocal project_id
+        from ...config.models import get_memos_home
+        from ...features.activity_log import read_events
+
+        mem = request.app.state.context_memory
+        now = time.time()
+
+        # 从 project_id 获取：查询参数 → _project_id_ctx（统一出口）→ 空
+        if not project_id:
+            from ...server.mcp import _project_id_ctx as _pid_ctx
+            project_id = _pid_ctx.get()
+
+        # 读取 injected_records 文件
+        injected_path = get_memos_home() / "etc" / f".injected_records_{project_id}.json"
+        injection_records = []
+        try:
+            if injected_path.exists():
+                data = json.loads(injected_path.read_text(encoding="utf-8"))
+                injection_records = data.get("records", [])
+        except Exception:
+            pass
+
+        # 读取 activity_log 最近 5 条用户建议记录
+        activity_items = []
+        try:
+            events = read_events(project_id=project_id or None, page=1, page_size=50)
+            activity_items = [
+                e for e in events.get("items", [])
+                if e.get("injection_type") == "manual"
+            ][:5]
+        except Exception:
+            pass
+
+        # 读取最新 task
+        task_status = "none"
+        task_detail = ""
+        try:
+            tasks = mem.list_memories(project_id=project_id, type_filter="task", where={"status": "active"}, limit=1)
+            if tasks:
+                task_meta = tasks[0].get("metadata", {})
+                if task_meta.get("status") == "active":
+                    task_status = "active"
+                    content = tasks[0].get("document", "")
+                    try:
+                        content_obj = json.loads(content) if content else {}
+                        task_detail = content_obj.get("goal", content[:100])
+                    except (json.JSONDecodeError, TypeError):
+                        task_detail = content[:100] if content else ""
+                else:
+                    task_status = "inactive"
+                    content = tasks[0].get("document", "")
+                    try:
+                        content_obj = json.loads(content) if content else {}
+                        task_detail = content_obj.get("goal", content[:100])
+                    except (json.JSONDecodeError, TypeError):
+                        task_detail = content[:100] if content else ""
+        except Exception:
+            pass
+
+        # 读取简报状态（最近5天最新简报，联动简报工作台）
+        briefing_status = "none"
+        briefing_date = ""
+        briefing_summary = ""
+        briefing_id = ""
+        briefing_delivered = False
+        briefing_allow_toggle = False
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")  # fallback
+        try:
+            briefings = mem.list_memories(project_id=project_id, type_filter="briefing", limit=10)
+            from zoneinfo import ZoneInfo
+
+            from ...config import get_local_timezone
+            now_local = datetime.now(ZoneInfo(get_local_timezone()))
+            today_str = now_local.strftime("%Y-%m-%d")
+            five_days_ago = (now_local - timedelta(days=5)).strftime("%Y-%m-%d")
+
+            # 筛选最近5天简报
+            candidates = []
+            for item in briefings:
+                meta = item.get("metadata", {})
+                bd = meta.get("briefing_date", "")
+                if five_days_ago <= bd <= today_str:
+                    candidates.append(item)
+
+            if candidates:
+                candidates.sort(key=lambda x: x["metadata"].get("briefing_date", ""), reverse=True)
+                latest = candidates[0]
+                meta = latest.get("metadata", {})
+                briefing_date = meta.get("briefing_date", "")
+                briefing_id = latest.get("id", "")
+                briefing_delivered = bool(meta.get("delivered", False))
+                doc = latest.get("document", "")
+                try:
+                    obj = json.loads(doc) if doc else {}
+                    briefing_summary = obj.get("summary", doc[:200])
+                except (json.JSONDecodeError, TypeError):
+                    briefing_summary = doc[:200]
+                # 注入控制开关：5天内 quality=full 均可切换
+                quality = meta.get("quality", "")
+                briefing_allow_toggle = (quality == "full")
+
+            # 检查注入记录中是否有 briefing
+            briefing_injected = any(
+                r.get("source_type") == "briefing" for r in injection_records
+            )
+            briefing_status = "injected" if briefing_injected else ("exists" if briefing_date else "none")
+        except Exception:
+            pass
+
+        # 统计知识注入
+        knowledge_count = 0
+        knowledge_types = []
+        knowledge_scores = []
+        for r in injection_records:
+            if r.get("source_type") in ("task", "briefing", "solution", "decision", "lesson", "process"):
+                knowledge_count += 1
+                if r.get("source_type") not in knowledge_types:
+                    knowledge_types.append(r.get("source_type"))
+                if r.get("final_score"):
+                    knowledge_scores.append(r["final_score"])
+
+        avg_score = round(sum(knowledge_scores) / len(knowledge_scores), 2) if knowledge_scores else 0
+        suggestion_count = len(activity_items)
+
+        return {
+            "last_session_at": datetime.now().isoformat(),
+            "cards": {
+                "task": {
+                    "status": task_status,
+                    "label": {"active": "活跃中", "inactive": "已暂停", "none": "无"}.get(task_status, "无"),
+                    "detail": task_detail,
+                },
+                "briefing": {
+                    "status": briefing_status,
+                    "label": {"injected": "已注入", "exists": "已生成", "none": "未生成"}.get(briefing_status, "未生成"),
+                    "date": today_str,
+                    "briefing_date": briefing_date,
+                    "summary": briefing_summary,
+                    "delivered": briefing_delivered,
+                    "allow_toggle": briefing_allow_toggle,
+                    "briefing_id": briefing_id,
+                },
+                "knowledge": {
+                    "status": "injected" if knowledge_count > 0 else "empty",
+                    "count": knowledge_count,
+                    "label": f"{knowledge_count} 条" if knowledge_count > 0 else "无",
+                    "avg_score": avg_score,
+                    "types": knowledge_types,
+                },
+                "suggestion": {
+                    "status": "triggered" if suggestion_count > 0 else "idle",
+                    "label": f"触发 {suggestion_count} 次" if suggestion_count > 0 else "未触发",
+                    "count": suggestion_count,
+                },
+            },
+            "injection_timeline": [
+                {
+                    "time": datetime.fromtimestamp(r.get("timestamp", now)).strftime("%Y-%m-%d %H:%M:%S"),
+                    "type": r.get("source_type", "unknown"),
+                    "content": r.get("content", ""),
+                    "score": r.get("final_score", 0),
+                    "id": r.get("id", ""),
+                }
+                for r in injection_records[:10]
+            ],
+            "instruction_panel": {
+                # TASK_EVAL 指令由 Hook F2 管道注入，条件仅为 project_id 非空，与 task 状态无关
+                "task_eval_injected": bool(project_id),
+                "task_eval_variant": "cold_start",
+                "task_eval_content": task_detail if task_status == "active" else "",
+                "task_eval_instruction": (
+                    "请在本轮回复末尾附加任务进度自评，格式：\n"
+                    "[TASK_EVAL]\n"
+                    '{"done": [...], "todo": [...], "blocked": [...]}\n'
+                    "[/TASK_EVAL]"
+                ) if project_id else "",
+            },
+        }
+
+    return await run_sync(_sync)
+
+
+@router.get("/api/v2/stats/pending-archive")
+async def pending_archive_stats(request: Request):
+    """获取待归档数量：status=forgotten 且超过 archive_days 阈值的记忆数。
+
+    与 SchedulerThread._auto_archive_forgotten 保持一致的 forgotten_at 判断逻辑。
+    排除 forgotten_at=0 的未迁移旧数据。
+    """
+    mem = _get_memory(request)
     now = time.time()
+    cutoff = now - config.memory.archive_days * 86400
 
-    # 从 project_id 获取：查询参数 → _project_id_ctx（统一出口）→ 空
-    if not project_id:
-        from ...server.mcp import _project_id_ctx as _pid_ctx
-        project_id = _pid_ctx.get()
-
-    # 读取 injected_records 文件
-    injected_path = get_memos_home() / "etc" / f".injected_records_{project_id}.json"
-    injection_records = []
-    try:
-        if injected_path.exists():
-            data = json.loads(injected_path.read_text(encoding="utf-8"))
-            injection_records = data.get("records", [])
-    except Exception:
-        pass
-
-    # 读取 activity_log 最近 5 条用户建议记录
-    activity_items = []
-    try:
-        events = read_events(project_id=project_id or None, page=1, page_size=50)
-        activity_items = [
-            e for e in events.get("items", [])
-            if e.get("injection_type") == "manual"
-        ][:5]
-    except Exception:
-        pass
-
-    # 读取最新 task
-    task_status = "none"
-    task_detail = ""
-    try:
-        tasks = mem.list_memories(project_id=project_id, type_filter="task", where={"status": "active"}, limit=1)
-        if tasks:
-            task_meta = tasks[0].get("metadata", {})
-            if task_meta.get("status") == "active":
-                task_status = "active"
-                content = tasks[0].get("document", "")
-                try:
-                    content_obj = json.loads(content) if content else {}
-                    task_detail = content_obj.get("goal", content[:100])
-                except (json.JSONDecodeError, TypeError):
-                    task_detail = content[:100] if content else ""
-            else:
-                task_status = "inactive"
-                content = tasks[0].get("document", "")
-                try:
-                    content_obj = json.loads(content) if content else {}
-                    task_detail = content_obj.get("goal", content[:100])
-                except (json.JSONDecodeError, TypeError):
-                    task_detail = content[:100] if content else ""
-    except Exception:
-        pass
-
-    # 读取简报状态（最近5天最新简报，联动简报工作台）
-    briefing_status = "none"
-    briefing_date = ""
-    briefing_summary = ""
-    briefing_id = ""
-    briefing_delivered = False
-    briefing_allow_toggle = False
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")  # fallback
-    try:
-        briefings = mem.list_memories(project_id=project_id, type_filter="briefing", limit=10)
-        from zoneinfo import ZoneInfo
-
-        from ...config import get_local_timezone
-        now_local = datetime.now(ZoneInfo(get_local_timezone()))
-        today_str = now_local.strftime("%Y-%m-%d")
-        five_days_ago = (now_local - timedelta(days=5)).strftime("%Y-%m-%d")
-
-        # 筛选最近5天简报
-        candidates = []
-        for item in briefings:
-            meta = item.get("metadata", {})
-            bd = meta.get("briefing_date", "")
-            if five_days_ago <= bd <= today_str:
-                candidates.append(item)
-
-        if candidates:
-            candidates.sort(key=lambda x: x["metadata"].get("briefing_date", ""), reverse=True)
-            latest = candidates[0]
-            meta = latest.get("metadata", {})
-            briefing_date = meta.get("briefing_date", "")
-            briefing_id = latest.get("id", "")
-            briefing_delivered = bool(meta.get("delivered", False))
-            doc = latest.get("document", "")
-            try:
-                obj = json.loads(doc) if doc else {}
-                briefing_summary = obj.get("summary", doc[:200])
-            except (json.JSONDecodeError, TypeError):
-                briefing_summary = doc[:200]
-            # 注入控制开关：5天内 quality=full 均可切换
-            quality = meta.get("quality", "")
-            briefing_allow_toggle = (quality == "full")
-
-        # 检查注入记录中是否有 briefing
-        briefing_injected = any(
-            r.get("source_type") == "briefing" for r in injection_records
-        )
-        briefing_status = "injected" if briefing_injected else ("exists" if briefing_date else "none")
-    except Exception:
-        pass
-
-    # 统计知识注入
-    knowledge_count = 0
-    knowledge_types = []
-    knowledge_scores = []
-    for r in injection_records:
-        if r.get("source_type") in ("task", "briefing", "solution", "decision", "lesson", "process"):
-            knowledge_count += 1
-            if r.get("source_type") not in knowledge_types:
-                knowledge_types.append(r.get("source_type"))
-            if r.get("final_score"):
-                knowledge_scores.append(r["final_score"])
-
-    avg_score = round(sum(knowledge_scores) / len(knowledge_scores), 2) if knowledge_scores else 0
-    suggestion_count = len(activity_items)
-
-    return {
-        "last_session_at": datetime.now().isoformat(),
-        "cards": {
-            "task": {
-                "status": task_status,
-                "label": {"active": "活跃中", "inactive": "已暂停", "none": "无"}.get(task_status, "无"),
-                "detail": task_detail,
-            },
-            "briefing": {
-                "status": briefing_status,
-                "label": {"injected": "已注入", "exists": "已生成", "none": "未生成"}.get(briefing_status, "未生成"),
-                "date": today_str,
-                "briefing_date": briefing_date,
-                "summary": briefing_summary,
-                "delivered": briefing_delivered,
-                "allow_toggle": briefing_allow_toggle,
-                "briefing_id": briefing_id,
-            },
-            "knowledge": {
-                "status": "injected" if knowledge_count > 0 else "empty",
-                "count": knowledge_count,
-                "label": f"{knowledge_count} 条" if knowledge_count > 0 else "无",
-                "avg_score": avg_score,
-                "types": knowledge_types,
-            },
-            "suggestion": {
-                "status": "triggered" if suggestion_count > 0 else "idle",
-                "label": f"触发 {suggestion_count} 次" if suggestion_count > 0 else "未触发",
-                "count": suggestion_count,
-            },
-        },
-        "injection_timeline": [
-            {
-                "time": datetime.fromtimestamp(r.get("timestamp", now)).strftime("%Y-%m-%d %H:%M:%S"),
-                "type": r.get("source_type", "unknown"),
-                "content": r.get("content", ""),
-                "score": r.get("final_score", 0),
-                "id": r.get("id", ""),
-            }
-            for r in injection_records[:10]
-        ],
-        "instruction_panel": {
-            # TASK_EVAL 指令由 Hook F2 管道注入，条件仅为 project_id 非空，与 task 状态无关
-            "task_eval_injected": bool(project_id),
-            "task_eval_variant": "cold_start",
-            "task_eval_content": task_detail if task_status == "active" else "",
-            "task_eval_instruction": (
-                "请在本轮回复末尾附加任务进度自评，格式：\n"
-                "[TASK_EVAL]\n"
-                '{"done": [...], "todo": [...], "blocked": [...]}\n'
-                "[/TASK_EVAL]"
-            ) if project_id else "",
-        },
-    }
+    results = await run_sync(mem.store.get,
+        where={"$and": [{"status": "forgotten"}, {"forgotten_at": {"$lte": cutoff}}]},
+        include=["metadatas"],
+    )
+    metadatas = results.get("metadatas", [])
+    # 排除 forgotten_at=0 的未迁移旧数据
+    valid = 0
+    for i, meta in enumerate(metadatas):
+        if meta and meta.get("forgotten_at", 0):
+            valid += 1
+    return JSONResponse({"pending_archive_count": valid})
 
 
 @router.get("/api/v2/behavior-guide")
@@ -1066,7 +1096,7 @@ async def toggle_briefing_injection(request: Request, project_id: str = ""):
         return {"ok": False, "error": "缺少 briefing_id"}
 
     try:
-        mem.update_memory(briefing_id, new_metadata={"delivered": not enabled})
+        await run_sync(mem.update_memory, briefing_id, new_metadata={"delivered": not enabled})
         logger.info(
             "简报注入开关: %s delivered=%s (briefing_id=%s)",
             "开启" if enabled else "关闭",

@@ -207,6 +207,7 @@ def register_routes(app: FastAPI) -> None:
     from .routes.backups import router as backups_router
     from .routes.config_routes import router as config_router
     from .routes.conversations import router as conversations_router
+    from .routes.inbox import router as inbox_router
     from .routes.llm import router as llm_router
     from .routes.memories import router as memories_router
     from .routes.notifications import router as notifications_router
@@ -230,6 +231,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(suggestions_router)
     app.include_router(system_router)
     app.include_router(todos_router)
+    app.include_router(inbox_router)
 
     # v0.6.0: v2 API 路由
     from .routes.v2_routes import router as v2_router

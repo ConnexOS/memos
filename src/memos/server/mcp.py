@@ -6,6 +6,8 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -274,6 +276,19 @@ def remember(text: str, metadata: dict = None) -> str:
             _touch("watchlist")
         except Exception:
             logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
+        # v0.7.2: watchlist_update 通知
+        try:
+            from ..features.notifications import get_notification_logger
+
+            notifier = get_notification_logger()
+            notifier.notify(
+                type="watchlist_update",
+                title=f"新增待关注: {text[:40]}...",
+                message="",
+                metadata={"watchlist_id": mid, "action": "view"},
+            )
+        except Exception:
+            logger.debug("watchlist_update 通知失败（非致命）", exc_info=True)
         return json.dumps({"id": mid, "status": "watchlist"}, ensure_ascii=False)
     return "保存失败"
 
@@ -361,7 +376,7 @@ def list_memories(
     lines = []
     for item in items:
         t = item["metadata"].get("type", "unknown")
-        lines.append(f"[{t}] {item['document'][:_trunc]}  (id: {item['id'][:_id_len]}...)")
+        lines.append(f"[{t}] {item['document'][:_trunc]}  (id: {item['id']})")
     return "\n".join(lines)
 
 
@@ -406,6 +421,138 @@ _MANUAL_SUGGESTION_ALLOWED_KEYS = {
 }
 
 
+# ==== v0.7.2: MCP 写入去重策略优化 ====
+
+def _call_llm(prompt_text: str, timeout_sec: int = 30) -> str | None:
+    """直接调用 LLM（使用 urllib 而非项目 LLM 抽象，避免后台线程引入过多导入依赖和锁争用）。
+    向 app.py 的 LLM 调用对齐（去除 max_tokens、统一 model 回退、用 config.request_timeout）。
+    返回 response JSON 字符串，超时/失败返回 None。"""
+    ep = config.llm.active_endpoint
+    if not ep or not ep.api_base:
+        logger.warning("LLM 端点未配置，跳过去重判断")
+        return None
+
+    # 与 app.py 对齐：model 回退用 "default"，不传 max_tokens，timeout 用 config 值
+    payload = json.dumps({
+        "model": ep.model or "default",
+        "messages": [{"role": "user", "content": prompt_text}],
+        "temperature": 0.1,
+    }).encode()
+
+    headers = {"Content-Type": "application/json"}
+    if ep.api_key:
+        headers["Authorization"] = f"Bearer {ep.api_key}"
+
+    req = urllib.request.Request(
+        ep.api_base.rstrip("/") + "/chat/completions",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            body = resp.read().decode()
+            data = json.loads(body)
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                logger.warning("LLM 返回空内容，响应前 200 字符: %s", body[:200])
+            return content
+    except (urllib.error.URLError, ConnectionError, json.JSONDecodeError, KeyError) as e:
+        logger.warning("LLM 调用失败: %s", e)
+        return None
+
+
+def _dedup_llm_judge(text: str, new_mem_type: str, old_text: str, old_id: str, original_meta: dict) -> None:
+    """后台线程：LLM 判断新旧知识是否同一内容，按类型策略处理。
+
+    直接调用，不返回值，结果通过通知中心反馈。
+    """
+    # 与 app.py 对齐：使用配置的 request_timeout（当前 600s）
+    timeout = config.llm.request_timeout
+
+    # 构造类型专用 prompt
+    prompts = {
+        "solution": (
+            f"你是一个知识去重引擎。知识类型：solution（问题+解决方案）\n"
+            f"旧记忆: {old_text[:500]}\n"
+            f"新记忆: {text[:500]}\n"
+            f"判断：是否同一错误场景的同一解决方案？若不是，是否互补（不同方案）？\n"
+            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": bool, \"reasoning\": \"...\"}}"
+        ),
+        "decision": (
+            f"你是一个知识去重引擎。知识类型：decision（技术选型/架构决策）\n"
+            f"旧记忆: {old_text[:500]}\n"
+            f"新记忆: {text[:500]}\n"
+            f"判断：是否同一决策主题的更新？决策具有迭代性——新决策应覆盖旧决策。\n"
+            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": true, \"reasoning\": \"...\"}}"
+        ),
+        "lesson": (
+            f"你是一个知识去重引擎。知识类型：lesson（经验教训）\n"
+            f"旧记忆: {old_text[:500]}\n"
+            f"新记忆: {text[:500]}\n"
+            f"判断：是否同一认知角度？教训具有互补性——不同角度应共存。\n"
+            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": false, \"reasoning\": \"...\"}}"
+        ),
+    }
+
+    prompt = prompts.get(new_mem_type)
+    if not prompt:
+        return
+
+    try:
+        result = _call_llm(prompt, timeout_sec=timeout)
+        if not result:
+            raise ValueError("LLM 返回空")
+        verdict = json.loads(result)
+    except json.JSONDecodeError:
+        logger.warning("LLM 去重 JSON 解析失败 (%s), 原始返回: %s", new_mem_type, (result or "")[:300])
+        raise
+    except Exception as e:
+        logger.warning("LLM 去重判断失败 (%s): %s", new_mem_type, e)
+        # 错误处理：decision 降级为直接覆盖，其余跳过
+        if new_mem_type == "decision":
+            mem = _get_memory()
+            # 先写入新知识，再用新 ID 覆盖旧知识（防止数据丢失）
+            new_meta = {**original_meta, "quality_score": 1.0, "quality_reason": "LLM 降级覆盖（去重判断失败）"}
+            new_id = mem.remember(text, metadata=new_meta)
+            if new_id:
+                mem.supersede_memory(old_id, new_id=new_id)
+                logger.info("save_knowledge 去重判断失败(dedup_failed) -> decision 降级覆盖 old=%s new=%s", old_id[:8], new_id[:8])
+        else:
+            logger.info("save_knowledge 去重判断失败(dedup_failed) -> %s 跳过写入（LLM 返回空）", new_mem_type)
+        # 发送 dedup_failed 通知
+        try:
+            from ..features.notifications import get_notification_logger
+            notifier = get_notification_logger()
+            notifier.notify(
+                type="dedup_failed",
+                title=f"去重判断失败: {text[:40]}...",
+                message=f"类型={new_mem_type}，已降级处理",
+                metadata={"action": "retry", "memory_type": new_mem_type},
+            )
+        except Exception:
+            pass
+        return
+
+    # 按 verdict 处理
+    mem = _get_memory()
+    if verdict.get("is_superseding"):
+        meta = {**original_meta, "quality_score": original_meta.get("quality_score", 1.0), "quality_reason": "LLM 判覆盖"}
+        new_id = mem.remember(text, metadata=meta)  # 先写入新知识，获取真实 ID
+        if new_id:
+            mem.supersede_memory(old_id, new_id=new_id)  # 再用真实 ID 覆盖旧知识
+            logger.info("save_knowledge 去重完成 -> 覆盖 old=%s new=%s reasoning=%s", old_id[:8], new_id[:8], verdict.get("reasoning", "")[:80])
+    elif not verdict.get("is_same"):
+        # 不同内容，追加写入
+        meta = {**original_meta, "quality_score": original_meta.get("quality_score", 1.0), "quality_reason": "LLM 判不同"}
+        mid = mem.remember(text, metadata=meta)
+        if mid:
+            logger.info("save_knowledge 去重完成 -> 追加写入 id=%s reasoning=%s", mid[:8], verdict.get("reasoning", "")[:80])
+    else:
+        # 同一 + 不覆盖 → skip
+        logger.info("save_knowledge 去重完成 -> 跳过（与旧记忆 %s 重复） reasoning=%s", old_id[:8], verdict.get("reasoning", "")[:80])
+
+
 @mcp.tool()
 def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
     """直接保存知识到知识库（路径 B），由用户明确指令触发。
@@ -434,17 +581,20 @@ def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
         "type": effective_type,
         "project_id": _get_project_id(),
         "project_name": _get_project_name(_get_project_id()),
-        "source": "user_instructed",
+        "source": "auto_save",
         "scope": "team",
         "creator_id": _resolve_creator_id(from_ctx=True),
-        "quality_score": 1.0,
-        "quality_reason": "用户直写",
+        "quality_score": 0.8,
+        "quality_reason": "Claude 主动保存",
     }
+    # 合并调用方传入的 metadata（可覆盖 quality_score / source / quality_reason 等）
+    if metadata:
+        meta.update(metadata)
 
     mem = _get_memory()
     pid = _get_project_id()
 
-    # v0.4.1: 写入前去重，用户直写评分1.0优先覆盖
+    # v0.4.1: 写入前去重，默认评分 0.8，调用方可通过 metadata 覆盖
     dedup_failed = False
     try:
         similar = mem.recall_with_scores(text, project_id=pid, where={"type": effective_type})
@@ -455,55 +605,36 @@ def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
     except Exception as e:
         logger.warning("save_knowledge 去重查询失败(%s)，降级为直接写入", e)
         similar = []
-    overwritten = None
     if similar and similar[0]["distance"] < config.memory.similarity_threshold:
         dup = similar[0]
-        old_score = dup.get("metadata", {}).get("quality_score", 0.5)
-        if 1.0 > old_score:
-            try:
-                # v0.4.4 P1-1: 改用 update_memory 覆盖内容，保留 reuse_count/feedback_count 等累计元数据
-                merged_meta = {**meta, "quality_score": 1.0, "quality_reason": "用户直写（覆盖旧知识）"}
-                mem.update_memory(dup["id"], new_content=text, new_metadata=merged_meta)
-                overwritten = dup["id"]
-                logger.info(
-                    "save_knowledge 覆盖旧知识: id=%s old_score=%.2f dist=%.3f",
-                    overwritten[:8],
-                    old_score,
-                    dup["distance"],
-                )
-            except Exception as e:
-                logger.warning(
-                    "save_knowledge update_memory 失败(id=%s error=%s)，回退到 delete+remember",
-                    dup["id"][:8],
-                    e,
-                )
-                try:
-                    mem.delete_memory(dup["id"])
-                    overwritten = dup["id"]
-                except Exception as e2:
-                    logger.warning("save_knowledge 删除旧知识也失败: %s", e2)
-        else:
-            return f"已存在相同知识（相似度 {1 - dup['distance']:.0%}），且质量评分不低于当前，已跳过保存。"
 
-    if overwritten:
-        mid = overwritten
-        # v0.4.4 P1-1: 冲突检测在已有记忆上运行
-        if config.memory.conflict_detection_enabled:
-            ext = _get_extractor()
-            ext._detect_conflicts_async(text, overwritten)
-        # F7 活动日志埋点（非阻塞）
-        try:
-            from ..features.activity_log import log_knowledge_write as _log_kw
-            _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "overwrite"}, project_id=_get_project_id())
-        except Exception:
-            logger.debug("save_knowledge 活动日志埋点(覆盖)失败", exc_info=True)
-        # F9: SSE 事件总线通知
-        try:
-            from ..features.event_bus import touch_event as _touch
-            _touch("memory_stream")
-        except Exception:
-            logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
-        return f"已覆盖旧知识 (id: {overwritten[:_id_len]}...)"
+        if effective_type == "process":
+            # process：不调 LLM，直接覆盖
+            merged_meta = {**meta, "quality_score": 1.0, "quality_reason": "process 覆盖（按类型策略）"}
+            mem.update_memory(dup["id"], new_content=text, new_metadata=merged_meta)
+            # F7 活动日志埋点（非阻塞）
+            try:
+                from ..features.activity_log import log_knowledge_write as _log_kw
+                _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "overwrite"}, project_id=_get_project_id())
+            except Exception:
+                logger.debug("save_knowledge 活动日志埋点(覆盖)失败", exc_info=True)
+            # F9: SSE 事件总线通知
+            try:
+                from ..features.event_bus import touch_event as _touch
+                _touch("memory_stream")
+            except Exception:
+                logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
+            return "已覆盖旧知识（process 直接覆盖）"
+        else:
+            # solution/decision/lesson：异步 LLM 判断
+            old_text = dup.get("document", "")
+            threading.Thread(
+                target=_dedup_llm_judge,
+                args=(text, effective_type, old_text, dup["id"], meta),
+                daemon=True,
+            ).start()
+            return "已收到，去重判断中"
+
     else:
         mid = mem.remember(text, metadata=meta)
         if mid:
@@ -522,6 +653,8 @@ def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
                 _touch("memory_stream")
             except Exception:
                 logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
+            # v0.7.2: quality_alert 通知
+            _notify_if_low_quality(text, mid, effective_type, meta)
             msg = f"已直接保存知识到知识库 (id: {mid[:_id_len]}...)"
             if dedup_failed:
                 msg += "（数据库异常，去重检查未完成，建议运行 memos doctor 诊断）"
@@ -585,6 +718,50 @@ def _save_manual_suggestion(text: str, metadata: dict) -> str:
     return "保存失败"
 
 
+# v0.7.2: quality_alert 通知
+def _notify_if_low_quality(text: str, memory_id: str, mem_type: str, meta: dict):
+    """quality_score < 阈值时发送 quality_alert 通知（含 60min 限频）。"""
+    qs = meta.get("quality_score", 1.0)
+    threshold = getattr(config.memory, "quality_alert_threshold", 0.5)
+    if qs >= threshold:
+        return
+
+    try:
+        from ..features.notifications import get_notification_logger
+
+        notifier = get_notification_logger()
+
+        # 60min 限频：检查最近 60 分钟内是否已有同一 memory_id 的 quality_alert
+        rate_limit = 60  # 分钟
+        now = time.time()
+        existing = notifier._read_all()
+        for rec in reversed(existing):
+            if rec.get("type") == "quality_alert":
+                meta_data = rec.get("metadata", {}) or {}
+                if meta_data.get("memory_id") == memory_id:
+                    age_minutes = (now - rec.get("timestamp", 0)) / 60
+                    if age_minutes < rate_limit:
+                        logger.debug(
+                            "quality_alert 限频跳过: memory_id=%s, age=%.1fmin",
+                            memory_id[:8], age_minutes,
+                        )
+                        return
+                    break
+
+        notifier.notify(
+            type="quality_alert",
+            title=f"低质量知识: {text[:40]}...",
+            message=f"quality_score={qs}，建议审查",
+            metadata={
+                "memory_id": memory_id,
+                "quality_score": qs,
+                "action": "review",
+            },
+        )
+    except Exception as e:
+        logger.debug("quality_alert 通知失败（非致命）: %s", e)
+
+
 @mcp.tool()
 def update_memory(memory_id: str, text: str = None, metadata: dict = None) -> str:
     """更新记忆内容和/或元数据。仅可更新当前项目下的记忆。metadata 采用合并更新策略。
@@ -605,6 +782,8 @@ def update_memory(memory_id: str, text: str = None, metadata: dict = None) -> st
         dropped = orig_keys - set(metadata.keys())
         if dropped:
             logger.debug("update_memory 过滤非法 metadata key: %s", dropped)  # P3-1: 记录被过滤的 key
+    # P3-17: 防御性清理尾部 ...（用户从 list_memories 拷贝截断 ID）
+    memory_id = memory_id.rstrip(".")
     mem = _get_memory()
     existing = mem.get_memory(memory_id)
     if existing is None:
@@ -615,7 +794,7 @@ def update_memory(memory_id: str, text: str = None, metadata: dict = None) -> st
         return "请至少提供 text 或 metadata 中的一个参数。"
     try:
         mem.update_memory(memory_id, new_content=text, new_metadata=metadata)
-        return f"已更新记忆 (id: {memory_id[:_id_len]}...)"
+        return f"已更新记忆 (id: {memory_id})"
     except Exception as e:
         return f"更新失败: {e}"
 
@@ -626,6 +805,8 @@ def delete_memory(memory_id: str) -> str:
     # P3-3: 空 memory_id 前端校验
     if not memory_id or not memory_id.strip():
         return "参数错误: memory_id 不能为空"
+    # P3-17: 防御性清理尾部 ...（用户从 list_memories 拷贝截断 ID）
+    memory_id = memory_id.rstrip(".")
     mem = _get_memory()
     existing = mem.get_memory(memory_id)
     if existing is None:
@@ -634,7 +815,7 @@ def delete_memory(memory_id: str) -> str:
         return "跨项目操作被拒绝"
     try:
         mem.delete_memory(memory_id)
-        return f"已删除记忆 (id: {memory_id[:_id_len]}...)"
+        return f"已删除记忆 (id: {memory_id})"
     except Exception as e:
         return f"删除失败: {e}"
 

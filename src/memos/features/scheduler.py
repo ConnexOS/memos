@@ -20,6 +20,40 @@ class TtlForgetTask:
     def __init__(self, mem):
         self.mem = mem
 
+    def _check_ttl_warnings(self, ids, metas, documents=None):
+        """检测 lesson 类型距过期 < 7 天的记忆，发送 ttl_warning。
+
+        documents 参数用于取记忆文本作为标题（ChromaDB 文本存在 documents 而非 metadata.content）。
+        """
+        from ..config import get_config
+        from ..features.notifications import get_notification_logger
+
+        cfg = get_config()
+        notifier = get_notification_logger()
+        warn_days = getattr(cfg.memory, "ttl_warn_days", 7)
+        warned = 0
+
+        docs = documents or [None] * len(ids)
+
+        for i, mid in enumerate(ids):
+            meta = metas[i] or {}
+            if meta.get("type") != "lesson":
+                continue
+            expires_at = meta.get("expires_at", 0) or 0
+            if not expires_at:
+                continue
+            remaining = expires_at - time.time()
+            if 0 < remaining < warn_days * 86400:
+                doc_text = docs[i] if docs[i] else meta.get("content", "")
+                notifier.notify(
+                    type="ttl_warning",
+                    title=f"即将过期: {doc_text[:40]}...",
+                    message=f"距过期还有 {int(remaining / 86400)} 天",
+                    metadata={"memory_id": mid, "expires_at": expires_at, "action": "renew"},
+                )
+                warned += 1
+        return warned
+
     def run(self) -> int:
         from ..config import get_config
 
@@ -40,13 +74,17 @@ class TtlForgetTask:
 
         results = self.mem.store.get(
             where={"$and": [{"status": "active"}]},
-            include=["metadatas"],
+            include=["metadatas", "documents"],
             limit=cfg.memory.ttl_scan_batch_size,
         )
         ids = results.get("ids", [])
         metas = results.get("metadatas", [])
+        documents = results.get("documents", [])
         if not ids:
             return 0
+
+        # v0.7.2: TTL warning 通知扫描
+        self._check_ttl_warnings(ids, metas, documents)
 
         to_forget = []
         for i, mid in enumerate(ids):

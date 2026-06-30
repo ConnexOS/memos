@@ -14,6 +14,16 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _ensure_utf8_stdout():
+    """将 sys.stdout 切换为 UTF-8 编码，根治 Windows GBK 编码问题。
+
+    在进程入口调用一次，后续所有 print()/sys.stdout.write() 均以 UTF-8 输出，
+    Claude Code 捕获 stdout 时能正确解析 UTF-8 内容。
+    """
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
 def _setup_file_logging():
     """添加文件日志处理器，写入 etc/hook_proxy.log 用于诊断"""
     try:
@@ -75,6 +85,7 @@ def run_hook_proxy(server_url: str, timeout: int = 30):
     from .auth import load_credentials
     from .project_id import resolve_project_id, resolve_project_name
 
+    _ensure_utf8_stdout()
     _setup_file_logging()
     logger.info("Hook 代理启动: server_url=%s", server_url)
 
@@ -104,26 +115,40 @@ def run_hook_proxy(server_url: str, timeout: int = 30):
         endpoint,
     )
 
+    # 预编码请求体为 UTF-8 字节，避免 Windows 上 requests 库用 GBK 编码 JSON 体
+    try:
+        body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    except Exception as e:
+        logger.warning("请求体编码失败: %s", e)
+        return
+
+    # 分离 HTTP 请求与 stdout 写入：POST 成功后即使 stdout 失败也不重试
+    http_succeeded = False
+    additional_context = ""
     for attempt in range(2):
+        if http_succeeded:
+            break
         try:
             resp = requests.post(
                 f"{server_url}{endpoint}",
-                json=payload,
-                headers=headers,
+                data=body_bytes,
+                headers={**headers, "Content-Type": "application/json"},
                 timeout=timeout,
             )
             logger.debug("Hook 响应 HTTP %d", resp.status_code)
             result = resp.json()
             additional_context = result.get("additional_context", "")
-            if additional_context:
-                sys.stdout.write(additional_context)
+            http_succeeded = True  # POST 成功，标记后不再重试
             break
         except Exception as e:
             logger.warning("Hook 请求失败 (attempt %d/2): %s", attempt + 1, e)
             if attempt == 0:
                 time.sleep(1)
                 continue
-        finally:
-            sys.stdout.flush()
+
+    # stdout 写入（sys.stdout 已切换为 UTF-8，无编码问题）
+    if additional_context:
+        sys.stdout.write(additional_context)
+    sys.stdout.flush()
 
     logger.info("Hook 代理完成")

@@ -60,7 +60,7 @@
 
 **定位**：MemoMate 是 Claude Code 的长期记忆层——自动记录、主动注入、Dashboard 可视化。
 
-**当前版本**：v0.7.1「打磨」（代号：Polish）。**无架构级变更**，聚焦 TTL 遗忘、技术债务清理、Dashboard 导航重构、UX 细节修复。
+**当前版本**：v0.7.2「收官」（代号：Finale）。v0.7.X 系列最终版本——覆盖信号枢纽（统一收件箱）、遗留功能完善、候选品质打磨三个维度。
 
 ### 五层架构
 
@@ -84,14 +84,18 @@ L1 原始记录层（Raw）      Hook 自动采集 user_input / assistant_output
 | L3 | **process** | 长期稳定 | Claude 自写（用户指令触发） | 涉及对应操作环节时 |
 | L5 | **watchlist** | 30 天未处理自动归档 | `remember()` MCP | L5「待关注」面板展示 |
 
-### v0.7.1 关键变更
+### v0.7.2 关键变更
 
-- **TTL 遗忘**：SchedulerThread 定时扫描，按类型覆盖过期阈值（task 48h / briefing 24h / lesson 90 天）。恢复操作重置 `updated_at` 重新计时
-- **Task 管理**：task 增加 `pending` 状态，每条 TASK_EVAL 保存为独立记录，形成可追溯的时间线。Task 面板移至总览组（不再在记忆管理面板展示）
-- **导航重构**：5 组 17 子面板，一级导航移入顶栏，顶栏精简为 4 项工具。更名：记忆流→事件看板，注入监控→监控面板，手工建议→用户建议
-- **状态模型**：三层分离（active / forgotten / archived），`inactive_reason` 按类型枚举，forgotten 30 天自动 archived
-- **SSE 韧性**：60s 空闲健康探测、连续 3 次失败降级、10s 周期性重连
-- **配置惰性化**：`get_config()` 替代模块级加载，消除导入时副作用
+- **收件箱全页（/inbox）**：三区聚合布局（系统通知 / 待关注 / 待修正），30s 未读轮询，全部已读与单条忽略，action→按钮动态映射
+- **通知类型去硬编码**：`get_unread_counts()` 动态 JSONL 统计，新增 quality_alert / ttl_warning / watchlist_update / dedup_failed 类型
+- **MCP 去重优化**：`save_knowledge()` 异步 LLM 判断（30s 超时），按类型差异化策略（solution/decision/lesson/process），MCP 立即返回不阻塞
+- **手工提炼 prompt 更新**：新 4 类体系（solution/decision/lesson/process），`default@extract` 模板同步更新
+- **任务审计弹窗**：`/api/tasks/audit` 端点，日期选择 + done 项时间线展示
+- **今日回顾右侧栏**：历史日报列表（日期+首行预览），点击加载完整日报
+- **统计卡修复**：`/api/v2/stats/pending-archive` 真实计算 forgotten+超期记忆数
+- **导航重构**：顶栏「🔔收件箱」入口，原待关注/待修正面板迁入收件箱
+- **通知 Badge 泛化**：从后端动态渲染通知类型
+- **安全加固**：认证审查、API 鉴权覆盖、输入过滤、敏感信息遮蔽
 
 ---
 
@@ -185,10 +189,18 @@ src/memos/
 
 | 文档 | 内容 |
 |------|------|
+| `document/72版本/MEMOS-v0.7.2-需求规格说明书.md` | v0.7.2 完整需求规格（收件箱/去重/审计/安全） |
+| `document/72版本/MEMOS-v0.7.2-产品设计定义.md` | v0.7.2 产品设计定义 — 头脑风暴决议 |
+| `document/72版本/MEMOS-v0.7.2-实施计划.md` | v0.7.2 三阶段实施计划 |
+| `document/71版本/MEMOS-v0.7.1-需求规格说明书.md` | v0.7.1 完整需求规格（TTL / 导航 / UX / API） |
+| `document/71版本/MEMOS-v0.7.1-实施计划.md` | v0.7.1 三阶段实施计划 |
+| `document/71版本/MEMOS-v0.7.1-Task管理架构方案.md` | Task 四态管理 + 时序追溯设计 |
+| `document/产品/MEMOS-产品设计定义.md` | 五层架构 + 全生命周期 + 核心约束 |
+| `document/产品/MEMOS-知识分类体系-重构方案.md` | 6 类分类体系重构设计 |
+| `document/产品/MEMOS-记忆元数据治理方案.md` | 三层分离 status 模型 + 旧 7 类迁移 |
+| `document/产品/MEMOS-v0.6.0至v1.0.0版本路线图.md` | 版本路线 |
 | `docs/mcp-tools.md` | MCP 工具参数 + 管线说明 |
 | `docs/cli-commands.md` | 完整 CLI 参考 |
 | `docs/api-reference.md` | Dashboard API 端点 |
 | `docs/test-infrastructure.md` | 测试分组 + Fixture + 模式 |
 | `docs/troubleshooting.md` | 故障排查指南 |
-
-> 内部需求与设计文档位于开发仓库，公开仓库仅含代码与公开文档。 |

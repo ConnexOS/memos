@@ -1,5 +1,34 @@
 # Dashboard API 参考
 
+## 收件箱 API（v0.7.2）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/inbox` | 收件箱全页（三区布局：系统通知 / 待关注 / 待修正） |
+| `GET` | `/api/inbox/items` | 三区聚合查询（返回 system_notifications / pending_review / watchlist） |
+| `GET` | `/api/inbox/unread-count` | 统一未读数（供 30s 轮询，动态统计所有通知类型） |
+| `POST` | `/api/inbox/dismiss/{id}` | 忽略/已读单条通知 |
+| `POST` | `/api/inbox/dismiss-all` | 批量已读所有通知（仅 JSONL 通知区，不操作 ChromaDB watchlist） |
+
+## 任务审计 API（v0.7.2）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/tasks/audit?date=YYYY-MM-DD` | 查询指定日期的 task [TASK_EVAL] done 项时间线 |
+
+## 统计 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/v2/stats/pending-archive` | 待归档数（status=forgotten 且超 archive_days 阈值的记忆数） |
+
+## 通知 API（v0.7.2）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/notifications/types` | 获取全量通知类型列表（供 Badge 动态渲染） |
+| `GET` | `/api/notifications/unread-count` | 各类型未读数（保留旧格式向后兼容） |
+
 ## 建议 API（v0.4.4）
 
 | 方法 | 路径 | 说明 |

@@ -11,27 +11,27 @@
         <ul class="nav nav-pills nav-group-tabs justify-content-center" id="groupTabs" style="flex:2">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="tab-overview" data-group="overview" type="button" role="tab">
-                    <i class="bi bi-speedometer2"></i><span class="d-none d-md-inline ms-1">总览</span>
+                    <i class="bi bi-speedometer2"></i><span class="d-none d-md-inline ms-1">项目总览</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="tab-conversation" data-group="conversation" type="button" role="tab">
-                    <i class="bi bi-chat-dots"></i><span class="d-none d-md-inline ms-1">对话</span>
+                    <i class="bi bi-chat-dots"></i><span class="d-none d-md-inline ms-1">对话管理</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="tab-memory" data-group="memory" type="button" role="tab">
-                    <i class="bi bi-database"></i><span class="d-none d-md-inline ms-1">记忆</span>
+                    <i class="bi bi-database"></i><span class="d-none d-md-inline ms-1">记忆管理</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="tab-followup" data-group="followup" type="button" role="tab">
-                    <i class="bi bi-check2-square"></i><span class="d-none d-md-inline ms-1">跟进</span>
+                <button class="nav-link" id="tab-todo" data-group="todo" type="button" role="tab">
+                    <i class="bi bi-check2-square"></i><span class="d-none d-md-inline ms-1">待办事项</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="tab-settings" data-group="settings" type="button" role="tab">
-                    <i class="bi bi-gear"></i><span class="d-none d-md-inline ms-1">配置</span>
+                    <i class="bi bi-gear"></i><span class="d-none d-md-inline ms-1">配置管理</span>
                 </button>
             </li>
         </ul>
@@ -53,42 +53,11 @@
             <button id="project-mgmt-btn" class="btn btn-sm btn-outline-info py-0" title="项目管理" onclick="openProjectManager()">
                 <i class="bi bi-diagram-2"></i>
             </button>
-            <!-- 通知中心 -->
-            <div class="dropdown v42-notif-bell">
-                <a href="#" class="dropdown-toggle text-decoration-none small text-secondary position-relative" data-bs-toggle="dropdown">
-                    <i class="bi bi-bell"></i>
-                    {% set total_unread = notifications.unread.total if notifications else 0 %}
-                    {% if total_unread > 0 %}
-                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size:0.6rem;">{{ total_unread }}</span>
-                    {% endif %}
-                </a>
-                <div class="dropdown-menu dropdown-menu-end p-2" style="min-width:320px;max-height:400px;overflow:hidden auto;">
-                    <div class="d-flex gap-2 mb-2 small">
-                        <span class="badge bg-info bg-opacity-25 text-info">提炼 {{ notifications.unread.extract_complete if notifications else 0 }}</span>
-                        <span class="badge bg-warning bg-opacity-25 text-warning">冲突 {{ notifications.unread.conflict_detected if notifications else 0 }}</span>
-                        <span class="badge bg-danger bg-opacity-25 text-danger">过期 {{ notifications.unread.expiry_alert if notifications else 0 }}</span>
-                    </div>
-                    {% if notifications and notifications.recent %}
-                        {% for n in notifications.recent %}
-                        <div class="dropdown-item small py-1 px-2 rounded {% if not n.read %}fw-bold{% endif %}" style="white-space:normal;">
-                            <div class="d-flex justify-content-between">
-                                <span class="text-{{ 'success' if n.type == 'extract_complete' else 'warning' if n.type == 'conflict_detected' else 'danger' }}">
-                                    {{ '🔔' if n.type == 'extract_complete' else '⚠' if n.type == 'conflict_detected' else '📋' }}
-                                    {{ n.title }}
-                                </span>
-                                <span class="text-muted ms-2" style="font-size:0.7rem;">{{ n._time_ago }}</span>
-                            </div>
-                            <div class="text-muted" style="font-size:0.75rem;">{{ n.message[:80] }}{% if n.message|length > 80 %}...{% endif %}</div>
-                        </div>
-                        {% endfor %}
-                        <div class="dropdown-divider"></div>
-                    {% else %}
-                        <div class="dropdown-item small text-muted">暂无通知</div>
-                        <div class="dropdown-divider"></div>
-                    {% endif %}
-                    <a href="/notifications" class="dropdown-item small text-center text-primary">查看全部通知 →</a>
-                </div>
-            </div>
+            <!-- 收件箱入口（带数字角标） -->
+            <a href="/inbox" class="btn btn-sm btn-outline-secondary py-0 position-relative" title="收件箱">
+                <i class="bi bi-inbox"></i>
+                <span id="inbox-badge-count" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none" style="font-size:0.6rem;">0</span>
+            </a>
             <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="modal" data-bs-target="#settingsModal" title="系统设置">
                 <i class="bi bi-gear"></i>
             </button>
@@ -111,3 +80,192 @@
         </div>
     </div>
 </nav>
+<script>
+// ═══════════════════════════════════════════════
+// 第一部分：导航 Tab 切换
+// ═══════════════════════════════════════════════
+(function navTabRouting() {
+    'use strict';
+
+    function switchGroup(group) {
+        var pane = document.getElementById('group-' + group);
+        if (pane) {
+            document.querySelectorAll('#groupTabs [data-group]').forEach(function(t) {
+                t.classList.remove('active');
+            });
+            var tab = document.querySelector('#groupTabs [data-group="' + group + '"]');
+            if (tab) tab.classList.add('active');
+
+            document.querySelectorAll('.group-pane').forEach(function(p) {
+                p.classList.remove('active');
+            });
+            pane.classList.add('active');
+
+            var activePill = pane.querySelector('.subpanel-pills .nav-link.active');
+            if (!activePill) activePill = pane.querySelector('.subpanel-pills .nav-link');
+            if (activePill && window.bootstrap) {
+                if (activePill.classList.contains('active')) {
+                    var target = document.querySelector(activePill.getAttribute('data-bs-target'));
+                    if (target && !target.classList.contains('show')) {
+                        target.classList.add('show', 'active');
+                    }
+                    activePill.dispatchEvent(new Event('shown.bs.tab', {bubbles: true}));
+                } else {
+                    bootstrap.Tab.getOrCreateInstance(activePill).show();
+                }
+            } else if (group === 'memory' && typeof loadMemoryManagement === 'function') {
+                loadMemoryManagement();
+            }
+            return;
+        }
+        window.location.href = '/?tab=' + group;
+    }
+
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('#groupTabs [data-group]');
+        if (btn) {
+            switchGroup(btn.getAttribute('data-group'));
+            window.location.hash = btn.getAttribute('data-group');
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener('hashchange', function() {
+        if (!document.querySelector('.group-pane')) return;
+        var g = window.location.hash.slice(1) || 'overview';
+        if (document.querySelector('#groupTabs [data-group="' + g + '"]')) {
+            switchGroup(g);
+        }
+    });
+
+    if (document.querySelector('.group-pane')) {
+        var initial = window.location.hash.slice(1);
+        if (!initial) {
+            var urlParams = new URLSearchParams(window.location.search);
+            initial = urlParams.get('tab') || 'overview';
+        }
+        if (document.querySelector('#groupTabs [data-group="' + initial + '"]')) {
+            switchGroup(initial);
+        }
+    }
+})();
+
+// ═══════════════════════════════════════════════
+// 第二部分：收件箱未读角标
+// ═══════════════════════════════════════════════
+(function initInboxBadge() {
+    function setBadge(count) {
+        var badge = document.getElementById('inbox-badge-count');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : count;
+            badge.classList.remove('d-none');
+        } else {
+            badge.classList.add('d-none');
+        }
+    }
+    fetch('/api/inbox/unread-count').then(function(r) { return r.json(); }).then(function(d) { setBadge(d.total || 0); }).catch(function() {});
+    setInterval(function() {
+        fetch('/api/inbox/unread-count').then(function(r) { return r.json(); }).then(function(d) { setBadge(d.total || 0); }).catch(function() {});
+    }, 30000);
+})();
+
+// ═══════════════════════════════════════════════
+// 第三部分：顶栏工具栏独立初始化
+// 兼容 dashboard.js 未加载的场景（如收件箱页）
+// ═══════════════════════════════════════════════
+(function navToolbarInit() {
+    'use strict';
+
+    // --- 项目下拉选择 ---
+    function _navLoadProjects() {
+        fetch('/api/projects').then(function(r) { return r.json(); }).then(function(data) {
+            var sel = document.getElementById('project-selector');
+            if (!sel || sel.options.length > 1) return; // dashboard.js 已处理则跳过
+            sel.innerHTML = '<option value="">选择项目...</option>';
+            (data.projects || []).forEach(function(p) {
+                var opt = document.createElement('option');
+                opt.value = p.project_id;
+                opt.textContent = p.project_name + ' (' + p.project_id + ')';
+                sel.appendChild(opt);
+            });
+            var saved = localStorage.getItem('memos_default_project');
+            var pid = saved || data.current_project || (data.projects || [])[0]?.project_id;
+            if (pid && [...sel.options].some(function(o) { return o.value === pid; })) {
+                sel.value = pid;
+            }
+        }).catch(function() {});
+    }
+
+    // --- 备份状态 ---
+    function _navLoadBackupStatus() {
+        fetch('/api/backup/status').then(function(r) { return r.json(); }).then(function(data) {
+            var el = document.getElementById('backup-status-text');
+            if (!el) return;
+            if (data.latest) {
+                var ts = new Date(data.latest.timestamp * 1000);
+                var timeStr = ts.toLocaleString('zh-CN', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                var icon = data.health === 'warning' || data.health === 'partial' ? '⚠' : '✓';
+                el.style.display = '';
+                el.innerHTML = icon + ' 上次备份: ' + timeStr;
+                el.className = data.days_since_backup > data.remind_after_days ? 'small text-warning' : 'small text-secondary';
+            } else {
+                el.style.display = '';
+                el.className = 'small text-warning';
+                el.textContent = '⚠ 暂无备份';
+            }
+        }).catch(function() {});
+    }
+
+    // --- 系统/LLM 状态 ---
+    function _navLoadTopBarStatus() {
+        Promise.all([
+            fetch('/api/health').then(function(r) { return r.json(); }).catch(function() { return null; }),
+            fetch('/api/v2/llm/ping').then(function(r) { return r.json(); }).catch(function() { return null; }),
+        ]).then(function(results) {
+            var health = results[0], llm = results[1];
+            var sysEl = document.getElementById('sys-status-indicator');
+            var llmEl = document.getElementById('llm-status-indicator');
+            if (sysEl) {
+                var icon = sysEl.querySelector('i');
+                if (health && health.status === 'ok') {
+                    icon.className = 'bi bi-cpu text-success';
+                    sysEl.title = '系统 (' + (health.version || '-') + ') 运行正常';
+                } else {
+                    icon.className = 'bi bi-cpu text-danger';
+                    sysEl.title = '系统异常';
+                }
+            }
+            if (llmEl) {
+                var icon = llmEl.querySelector('i');
+                if (llm && llm.llama_server_ok) {
+                    icon.className = 'bi bi-robot text-success';
+                    llmEl.title = (llm.active_endpoint || 'LLM') + ' 服务在线';
+                } else {
+                    icon.className = 'bi bi-robot text-danger';
+                    llmEl.title = 'LLM 服务离线';
+                }
+            }
+        }).catch(function() {});
+    }
+
+    // 退出：logout.js 已定义时不覆盖
+    window.handleLogout = window.handleLogout || function() {
+        fetch('/api/auth/logout', { method: 'POST' }).finally(function() {
+            localStorage.removeItem('memos_token');
+            window.location.href = '/login';
+        });
+    };
+
+    // --- 执行初始化 ---
+    // 只有工具栏 DOM 存在且 dashboard.js 尚未接管时执行
+    var _isDashboardLoaded = typeof loadMemories === 'function';
+    if (document.getElementById('project-selector') && !_isDashboardLoaded) {
+        _navLoadProjects();
+        _navLoadBackupStatus();
+        _navLoadTopBarStatus();
+        // 状态指示器每 60s 刷新
+        setInterval(_navLoadTopBarStatus, 60000);
+    }
+})();
+</script>

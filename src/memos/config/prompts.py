@@ -391,7 +391,7 @@ class PromptManager(BaseModel):
             self._ensure_template(tpl_id, name, tpl_type, sys_prompt)
 
         new_defaults = [
-            ("default@extract", "知识提炼 (v0.4.1)", "extract", _NEW_EXTRACT_SYSTEM_PROMPT),
+            ("default@extract", "知识提炼 (v0.7.2)", "extract", _NEW_EXTRACT_SYSTEM_PROMPT),
             ("default@daily-review", "今日回顾 (默认)", "daily-review", _DEFAULT_DAILY_REVIEW_PROMPT),
             ("default@briefing", "简报生成 (默认)", "briefing", _DEFAULT_BRIEFING_SYSTEM_PROMPT),
             ("default@conflict", "冲突检测", "conflict", _DEFAULT_CONFLICT_PROMPT),
@@ -401,16 +401,69 @@ class PromptManager(BaseModel):
             existing = self.get(tpl_id)
             if existing is None:
                 self._ensure_template(tpl_id, name, tpl_type, sys_prompt)
-            elif tpl_id == "default@extract" and not self._is_user_customized(existing):
+            elif tpl_id == "default@extract" and (
+                not self._is_user_customized(existing)
+                or "**fact**" in existing.draft.system_prompt
+                or "**preference**" in existing.draft.system_prompt
+                or "**todo**" in existing.draft.system_prompt
+            ):
                 existing.draft.system_prompt = sys_prompt
                 existing.save_draft(system_prompt=sys_prompt)
                 self.save()
-                logger.info("已升级模板 %s 到 v0.4.1 新版 system_prompt", tpl_id)
+                logger.info("已升级模板 %s 到 v0.7.2 新版 system_prompt (新 4 类)", tpl_id)
             elif tpl_id == "default@briefing" and "task_status" in existing.draft.system_prompt:
                 existing.draft.system_prompt = sys_prompt
                 existing.save_draft(system_prompt=sys_prompt)
                 self.save()
                 logger.info("已升级模板 %s 到 v0.7.1 新版 system_prompt", tpl_id)
+
+        # v0.7.2: 类型专用去重 prompt 模板
+        _dedup_templates = {
+            "default@dedup_solution": {
+                "system_prompt_text": (
+                    "你是一个知识去重引擎。类型：solution（问题+解决方案）\n"
+                    "旧记忆: {old_text}\n"
+                    "新记忆: {new_text}\n"
+                    "判断：是否同一错误场景的同一解决方案？若不是，是否互补（不同方案）？\n"
+                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": bool, \"reasoning\": \"...\"}"
+                ),
+                "template_type": "dedup",
+                "description": "solution 类型专用去重判断",
+            },
+            "default@dedup_decision": {
+                "system_prompt_text": (
+                    "你是一个知识去重引擎。类型：decision（技术选型/架构决策）\n"
+                    "旧记忆: {old_text}\n"
+                    "新记忆: {new_text}\n"
+                    "判断：是否同一决策主题的更新？决策具有迭代性——新决策应覆盖旧决策。\n"
+                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": true, \"reasoning\": \"...\"}"
+                ),
+                "template_type": "dedup",
+                "description": "decision 类型专用去重判断",
+            },
+            "default@dedup_lesson": {
+                "system_prompt_text": (
+                    "你是一个知识去重引擎。类型：lesson（经验教训）\n"
+                    "旧记忆: {old_text}\n"
+                    "新记忆: {new_text}\n"
+                    "判断：是否同一认知角度？教训具有互补性——不同角度应共存。\n"
+                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": false, \"reasoning\": \"...\"}"
+                ),
+                "template_type": "dedup",
+                "description": "lesson 类型专用去重判断",
+            },
+        }
+        for tid, tdata in _dedup_templates.items():
+            try:
+                self._ensure_template(
+                    tpl_id=tid,
+                    name=tdata["description"],
+                    tpl_type=tdata["template_type"],
+                    sys_prompt=tdata["system_prompt_text"],
+                    description=tdata["description"],
+                )
+            except Exception as e:
+                logger.warning("注册去重模板失败 (%s): %s", tid, e)
 
     def save(self):
         """持久化：写 index.json + 各模板目录（含默认模板，修改后重启不丢失）"""

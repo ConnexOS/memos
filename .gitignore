@@ -49,22 +49,25 @@ Thumbs.db
 # Git worktrees
 .worktrees/
 
-# Documentation (internal)
+# Documentation
 document/
+docs/
 
 # Claude Snapshots
 .claude/snapshots/
 
-# MCP config (local tokens)
-.mcp.json
-
 # Playwright MCP debug artifacts
 .playwright-mcp/
 
+# MCP config (local tokens)
+.mcp.json
+
 # Internal debug/utility scripts (not for public release)
+check_token.py
+copy_memos.*
 fix_tests.py
 inspect_test.py
 recover_file.py
-check_token.py
-copy_memos.*
 upgrade-memos.ps1
+
+etc/config.json

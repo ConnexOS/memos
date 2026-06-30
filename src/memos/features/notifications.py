@@ -107,14 +107,13 @@ class NotificationLogger:
         return notif_id
 
     def get_unread_counts(self) -> dict:
-        """获取按类型分组的未读计数。"""
-        counts = {"extract_complete": 0, "conflict_detected": 0, "expiry_alert": 0, "total": 0}
+        """获取按类型分组的未读计数（动态统计 JSONL 中所有类型）。"""
+        counts: dict[str, int] = {}
         for rec in self._read_all():
             if not rec.get("read") and not rec.get("dismissed"):
-                t = rec.get("type", "")
-                if t in counts:
-                    counts[t] += 1
-                counts["total"] += 1
+                t = rec.get("type", "unknown")
+                counts[t] = counts.get(t, 0) + 1
+        counts["total"] = sum(counts.values())
         return counts
 
     def list_notifications(

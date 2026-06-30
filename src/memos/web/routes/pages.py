@@ -62,6 +62,27 @@ def index(request: Request):
     return templates.TemplateResponse(request, "dashboard.html", ctx, headers=hdrs)
 
 
+@router.get("/inbox", response_class=HTMLResponse)
+def inbox_page(request: Request):
+    """统一收件箱全页（三区布局：系统通知 / 待关注 / 待修正）。"""
+    notif_ctx = _get_notification_context()
+    user_name = request.session.get("name", "")
+    user_role = request.session.get("role", "")
+    ctx = {
+        "notifications": notif_ctx,
+        "version": memos_version,
+        "user_name": user_name,
+        "user_role": user_role,
+        "auth_disabled": config.auth.disable,
+    }
+    if config.auth.disable:
+        return templates.TemplateResponse(request, "inbox.html", ctx)
+    token_str = request.cookies.get("memos_session")
+    if not token_str or not verify_session_token(token_str, config.auth.secret_key):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse(request, "inbox.html", ctx)
+
+
 # --- API: 记忆列表 ---
 
 

@@ -8,13 +8,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from ...config import config
+from ...config import config, get_memos_home
 from ...engine.extractor import MemoryExtractor, _extract_llm_content, _strip_think_block, format_conversation
 from ...engine.review import _query_conversations_by_date_range, generate_daily_report
 from ...errors import ChromaDBError, LLMUnreachableError
 from ..app import _get_projects_from_db, _invalidate_projects_cache
+from ..dependencies import get_project_id
 from ..models import (
     ConversationSearchRequest,
     DailyReviewRequest,
@@ -650,3 +651,104 @@ def save_daily_review(request: Request, req: SaveDailyReviewRequest):
         "message": f"日报已保存到 document/日报/{safe_name}/{filename}",
         "path": str(filepath.relative_to(base)),
     }
+
+
+def _resolve_daily_dir(request: Request, project_id: str) -> Path:
+    """统一解析日报目录：以 project_name 为子目录名，与 save 端点保持一致。"""
+    projects = _get_projects_from_db(request.app.state.context_memory)
+    project_name = None
+    for p in projects:
+        if p["project_id"] == project_id:
+            project_name = p.get("project_name")
+            break
+    safe_name = project_id  # 兜底
+    if project_name:
+        safe_name = "".join(c for c in project_name if c.isalnum() or c in " _-.")
+        safe_name = safe_name.strip() or project_id
+    return get_memos_home() / "document" / "日报" / safe_name
+
+
+@router.get("/api/conversations/daily-review/list")
+def list_daily_reviews(request: Request, project_id: str = Depends(get_project_id)):
+    """获取历史日报列表（日期 + 首行预览）。"""
+    daily_dir = _resolve_daily_dir(request, project_id)
+    if not daily_dir.exists():
+        return {"files": []}
+
+    files = []
+    for fp in sorted(daily_dir.glob("*.md"), reverse=True)[:90]:  # 最多 90 天
+        preview = ""
+        try:
+            content = fp.read_text("utf-8", errors="replace")[:200]
+            preview = content.split('\n')[0][:80]
+        except Exception:
+            pass
+        files.append({"name": fp.name, "preview": preview, "date": fp.stem})
+
+    return {"files": files}
+
+
+@router.get("/api/conversations/daily-review/get")
+def get_daily_review(request: Request, file: str = Query(...), project_id: str = Depends(get_project_id)):
+    """获取特定日报的完整内容。"""
+    daily_dir = _resolve_daily_dir(request, project_id)
+    fp = daily_dir / file
+    if not fp.exists() or not fp.is_file():
+        raise HTTPException(404, f"日报文件未找到: {file}")
+    try:
+        content = fp.read_text("utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(500, f"读取日报失败: {e}")
+    return {"content": content, "file": file, "date": fp.stem}
+
+
+# --- API: 任务审计 ---
+
+
+@router.get("/api/tasks/audit")
+def task_audit(
+    request: Request,
+    date: str = Query(...),
+    project_id: str = Depends(get_project_id),
+):
+    """查询指定日期的 task [TASK_EVAL] done 项。"""
+    mem = request.app.state.context_memory
+    if not mem:
+        return {"items": []}
+
+    # 解析日期
+    from datetime import datetime
+
+    try:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, f"无效日期格式: {date}，请使用 YYYY-MM-DD")
+
+    day_start = int(dt.timestamp())
+    day_end = day_start + 86400
+
+    results = mem.store.get(
+        where={"$and": [
+            {"type": "task"},
+            {"updated_at": {"$gte": day_start}},
+            {"updated_at": {"$lt": day_end}},
+            {"project_id": project_id},
+        ]},
+        include=["metadatas", "documents"],
+    )
+
+    items = []
+    for i, mid in enumerate(results.get("ids", [])):
+        doc = (results["documents"] or [""] * len(results["ids"]))[i]
+        meta = (results["metadatas"] or [{}] * len(results["ids"]))[i]
+        items.append({
+            "id": mid,
+            "timestamp": meta.get("timestamp", 0),
+            "goal": meta.get("goal", "") or (doc or "")[:60],
+            "document": doc,  # 交给前端 parseTaskEval() 统一解析
+        })
+
+    # 按时间从近到远排序
+    items.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    return {"items": items, "date": date}

@@ -19,6 +19,7 @@ from ..engine.memory import ContextMemory
 from .task_handler import TaskEvalQueue
 
 logger = logging.getLogger(__name__)
+_MEMOS_LOG_PREFIX = f"[MEMOS v{__import__('memos').__version__}]"
 
 # F2: TaskEvalQueue 全局实例（lifespan 中注入依赖后启动）
 _task_queue = TaskEvalQueue()
@@ -80,7 +81,7 @@ def _make_lifespan(collection_name: str = None):
             collection_name = os.environ.get("MEMOS_TEST_COLLECTION")
         # === 启动阶段 ===
         logger.info(
-            "[MEMOS v0.5.0] 启动中 mode=unified | http://%s:%s",
+            f"{_MEMOS_LOG_PREFIX} 启动中 mode=unified | http://%s:%s",
             config.server.host,
             config.server.port,
         )
@@ -88,7 +89,7 @@ def _make_lifespan(collection_name: str = None):
         context_memory = ContextMemory(collection_name=collection_name)
         context_memory.warmup()
         app.state.context_memory = context_memory
-        logger.info("[MEMOS v0.5.0] ChromaDB 已连接")
+        logger.info(f"{_MEMOS_LOG_PREFIX} ChromaDB 已连接")
 
         # 首次启动自动创建 admin 用户
         from ..web.auth import create_admin_on_first_start
@@ -109,7 +110,7 @@ def _make_lifespan(collection_name: str = None):
         _inject_memory(context_memory)
 
         logger.info(
-            "[MEMOS v0.5.0] 嵌入模型已加载 | %s (%s)",
+            f"{_MEMOS_LOG_PREFIX} 嵌入模型已加载 | %s (%s)",
             config.model.name,
             config.model.vector_dim,
         )
@@ -119,7 +120,13 @@ def _make_lifespan(collection_name: str = None):
         _task_queue._llm_caller = _get_llm_caller()
         _task_queue.start()
         app.state.task_queue = _task_queue
-        logger.info("[MEMOS v0.6.0] TaskEvalQueue 已启动")
+        logger.info(f"{_MEMOS_LOG_PREFIX} TaskEvalQueue 已启动")
+
+        # F6: 启动 SchedulerThread（每日 23:00 自动生成简报 + TTL 遗忘扫描）
+        from ..dashboard import init_scheduler
+
+        init_scheduler(context_memory)
+        logger.info(f"{_MEMOS_LOG_PREFIX} SchedulerThread 已启动")
 
         yield
 
@@ -132,7 +139,7 @@ def _make_lifespan(collection_name: str = None):
         logger.info("[MEMOS] 关闭信号已广播，等待长连接退出")
         await asyncio.sleep(2.5)  # 覆盖 SSE 内部 2s 检测周期 + 缓冲
         _task_queue.stop()
-        logger.info("[MEMOS v0.6.0] TaskEvalQueue 已停止")
+        logger.info(f"{_MEMOS_LOG_PREFIX} TaskEvalQueue 已停止")
         await _shutdown_with_timeout(app, timeout=5)
 
     return lifespan

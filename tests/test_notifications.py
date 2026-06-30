@@ -108,7 +108,7 @@ class TestNotificationLogger:
         counts = self.notifier.get_unread_counts()
         assert counts["extract_complete"] == 2
         assert counts["conflict_detected"] == 1
-        assert counts["expiry_alert"] == 0
+        assert counts.get("expiry_alert", 0) == 0
         assert counts["total"] == 3
 
     def test_rate_limit(self):
@@ -236,7 +236,7 @@ class TestDashboardNotificationAPI:
         if resp.status_code == 200:
             data = resp.json()
             assert "total" in data
-            assert "extract_complete" in data
+            assert isinstance(data, dict)
 
     def test_notifications_page_exists(self, client):
         """GET /notifications 页面路由存在。"""
@@ -247,3 +247,110 @@ class TestDashboardNotificationAPI:
         """标记不存在的通知返回错误。"""
         resp = client.post("/api/notifications/nonexistent123/read")
         assert resp.status_code in (404, 401)  # 401=未认证，404=不存在
+
+
+class TestNewNotificationTypes:
+    """v0.7.2 新通知类型测试（quality_alert / ttl_warning / watchlist_update）"""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.log_path = os.path.join(self.tmpdir, "test_notifications_v072.jsonl")
+        self.notifier = NotificationLogger(self.log_path)
+        self._rate_patcher = mock.patch("memos.config.config")
+        cfg = self._rate_patcher.start()
+        cfg.notification.rate_limit_minutes = 0
+        cfg.notification.retention_days = 30
+
+    def teardown_method(self):
+        self._rate_patcher.stop()
+        try:
+            os.remove(self.log_path)
+        except (FileNotFoundError, OSError):
+            pass
+
+    # --- 存储与读取 ---
+
+    def test_quality_alert_store_and_retrieve(self):
+        """quality_alert 类型通知可正常存储和读取。"""
+        nid = self.notifier.notify(
+            "quality_alert",
+            "低质量知识: 测试...",
+            "quality_score=0.3，建议审查",
+            metadata={"memory_id": "test123", "quality_score": 0.3, "action": "review"},
+        )
+        assert nid is not None
+        page, total = self.notifier.list_notifications(type_filter=["quality_alert"])
+        assert total == 1
+        assert page[0]["type"] == "quality_alert"
+        assert page[0]["metadata"]["quality_score"] == 0.3
+
+    def test_ttl_warning_store_and_retrieve(self):
+        """ttl_warning 类型通知可正常存储和读取。"""
+        nid = self.notifier.notify(
+            "ttl_warning",
+            "即将过期: 测试...",
+            "距过期还有 3 天",
+            metadata={"memory_id": "test456", "expires_at": 9999999999, "action": "renew"},
+        )
+        assert nid is not None
+        page, total = self.notifier.list_notifications(type_filter=["ttl_warning"])
+        assert total == 1
+        assert page[0]["type"] == "ttl_warning"
+
+    def test_watchlist_update_store_and_retrieve(self):
+        """watchlist_update 类型通知可正常存储和读取。"""
+        nid = self.notifier.notify(
+            "watchlist_update",
+            "新增待关注: 测试...",
+            "",
+            metadata={"watchlist_id": "test789", "action": "view"},
+        )
+        assert nid is not None
+        page, total = self.notifier.list_notifications(type_filter=["watchlist_update"])
+        assert total == 1
+        assert page[0]["type"] == "watchlist_update"
+
+    # --- 动态未读计数 ---
+
+    def test_dynamic_unread_counts_with_new_types(self):
+        """动态未读计数自动聚合新类型。"""
+        self.notifier.notify("quality_alert", "质量1", "msg")
+        self.notifier.notify("ttl_warning", "过期预警1", "msg")
+        self.notifier.notify("watchlist_update", "待关注1", "msg")
+        self.notifier.notify("extract_complete", "常规1", "msg")
+
+        counts = self.notifier.get_unread_counts()
+        assert counts["quality_alert"] == 1
+        assert counts["ttl_warning"] == 1
+        assert counts["watchlist_update"] == 1
+        assert counts["extract_complete"] == 1
+        assert counts["total"] == 4
+
+    def test_dynamic_unread_counts_empty(self):
+        """空通知文件返回仅包含 total=0。"""
+        counts = self.notifier.get_unread_counts()
+        assert counts == {"total": 0}
+
+    # --- 频率限制（验证新类型也受限频保护） ---
+
+    def test_rate_limit_new_types(self):
+        """新类型通知同样受频率限制保护。"""
+        self._rate_patcher.stop()
+        cfg_patcher = mock.patch("memos.config.config")
+        cfg = cfg_patcher.start()
+        cfg.notification.rate_limit_minutes = 60
+        cfg.notification.retention_days = 30
+
+        try:
+            nid1 = self.notifier.notify("quality_alert", "低质量1", "msg")
+            assert nid1 is not None
+            nid2 = self.notifier.notify("quality_alert", "低质量2", "msg")
+            assert nid2 is None  # 被限频
+            nid3 = self.notifier.notify("watchlist_update", "待关注1", "msg")
+            assert nid3 is not None  # 不同类型不受影响
+        finally:
+            cfg_patcher.stop()
+            self._rate_patcher = mock.patch("memos.config.config")
+            cfg2 = self._rate_patcher.start()
+            cfg2.notification.rate_limit_minutes = 0
+            cfg2.notification.retention_days = 30

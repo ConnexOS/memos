@@ -699,37 +699,9 @@ class ContextMemory:
             ignore_scope=ignore_scope,
         )
 
-        # ADD v0.7.0-P1-2: 添加 limit 防止全量加载 OOM，超限时记录日志
-        all_meta = self.store.get(where=where_clause, include=["metadatas"], limit=self._LIST_MAX_LOAD)
-        actual_count = len(all_meta["ids"])
-        if actual_count >= self._LIST_MAX_LOAD:
-            logger.warning("list_memories 结果集超限(%d)，仅处理前 %d 条", actual_count, self._LIST_MAX_LOAD)
-        meta_count = len(all_meta["ids"])
-        if meta_count == 0 or offset >= meta_count:
-            return []
-
-        # 按时间戳降序排列（兼容混合类型：float/int/str 统一转 float）
-        def _normalize_ts(v):
-            if isinstance(v, (int, float)):
-                return float(v)
-            if isinstance(v, str):
-                try:
-                    from datetime import datetime
-
-                    return datetime.fromisoformat(v).timestamp()
-                except (ValueError, TypeError):
-                    return 0.0
-            return 0.0
-
-        sorted_pairs = sorted(
-            [
-                (all_meta["ids"][i], _normalize_ts((all_meta["metadatas"][i] or {}).get("timestamp", 0)))
-                for i in range(meta_count)
-            ],
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        page_ids = [p[0] for p in sorted_pairs[offset : offset + limit]]
+        # v0.7.1-P3: 改用 get_ids_by_time 通过 SQLite 索引直接获取时间序 ID，
+        # 避免全量元数据加载 + 内存排序的 O(N) 问题
+        page_ids = self.store.get_ids_by_time(where=where_clause, limit=limit, offset=offset)
 
         if not page_ids:
             return []
@@ -1209,6 +1181,15 @@ class ContextMemory:
             metadatas=[{"status": "forgotten", "inactive_reason": inactive_reason, "forgotten_at": _time.time()}],
         )
         logger.info("forgotten: %s... (reason=%s)", mem_id[:8], inactive_reason)
+
+    def supersede_memory(self, old_id: str, new_id: str) -> None:
+        """标记旧记忆为被新记忆覆盖。"""
+        self.update_memory(old_id, metadata={
+            "status": "forgotten",
+            "inactive_reason": "superseded",
+            "superseded_by": new_id,
+        })
+        logger.info("superseded: %s... -> %s...", old_id[:8], new_id[:8])
 
     def archive_memory(self, mem_id: str, inactive_reason: str = "manual_archive"):
         if inactive_reason not in INACTIVE_REASON_VALUES:

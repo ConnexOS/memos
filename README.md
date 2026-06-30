@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.1-lightgrey)](https://pypi.org/project/memomate/)
+[![Version](https://img.shields.io/badge/version-0.7.2-lightgrey)](https://pypi.org/project/memomate/)
 
 > 📖 [中文文档](README.zh.md)
 
@@ -150,9 +150,7 @@ memos/
 | `update_todo(id, status)` | — | Change todo status |
 | `delete_memory(memory_id)` | — | Delete by ID |
 | `update_memory(id, text, meta)` | — | Update content/metadata |
-| `force_extract()` | A | Trigger immediate extraction |
 | `set_project_id(pid)` | — | Switch project scope |
-| `log_complete_turn(user, asst)` | A | Log a conversation round |
 
 ## CLI Commands
 

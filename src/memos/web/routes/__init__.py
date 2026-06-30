@@ -15,4 +15,5 @@
   notifications.py  — /api/notifications/* + /notifications
   llm.py            — /api/llm/* 端点管理
   system.py         — /api/status, /api/vacuum, /api/projects, /api/stats
+  inbox.py          — /api/inbox/* 收件箱三区聚合
 """

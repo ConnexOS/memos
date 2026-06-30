@@ -118,6 +118,15 @@ def dismiss_notification(
     raise HTTPException(404, "通知不存在")
 
 
+@router.get("/api/notifications/types")
+def get_notification_types():
+    """返回当前 JSONL 中存在的通知类型列表及对应未读数。"""
+    from ...features.notifications import get_notification_logger
+
+    notifier = get_notification_logger()
+    return notifier.get_unread_counts()  # 直接复用，返回 {type: count} 字典
+
+
 @router.get("/api/notifications/unread-count")
 def unread_notification_count(request: Request):
     from ...features.notifications import get_notification_logger

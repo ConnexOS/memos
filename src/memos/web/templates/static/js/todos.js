@@ -451,23 +451,22 @@ async function deleteTodosByStatus(status) {
     }
 }
 
-// Tab 切换时加载 + 轮询控制 + 编辑框快捷键 + 创建待办模态框绑定
+// 一级导航切换时加载 + 轮询控制 + 编辑框快捷键 + 创建待办模态框绑定
 document.addEventListener('DOMContentLoaded', function() {
-    var todoTab = document.getElementById('todo-tab');
-    if (todoTab) {
-        todoTab.addEventListener('shown.bs.tab', function() {
+    var todoGroupTab = document.getElementById('tab-todo');
+    if (todoGroupTab) {
+        todoGroupTab.addEventListener('click', function() {
             loadTodos();
             startTodoPolling();
         });
-        todoTab.addEventListener('hide.bs.tab', stopTodoPolling);
     }
     // 页面可见性变化时暂停/恢复轮询
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             stopTodoPolling();
         } else {
-            var todoPanel = document.getElementById('todo-panel');
-            if (todoPanel && todoPanel.classList.contains('active')) {
+            var todoGroup = document.getElementById('group-todo');
+            if (todoGroup && todoGroup.classList.contains('active')) {
                 startTodoPolling();
             }
         }

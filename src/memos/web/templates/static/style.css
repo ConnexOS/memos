@@ -297,3 +297,48 @@ body { font-size: .875rem; }
     overflow: hidden auto;
     min-height: 0;
 }
+
+/* === v0.7.2: 收件箱页面 === */
+#inbox-page { max-width: 960px; margin: 0 auto; }
+#inbox-page .list-group-item { border-left: 3px solid transparent; transition: background-color 0.15s; }
+#inbox-page .list-group-item:hover { background-color: var(--bs-tertiary-bg); }
+#inbox-page .nav-tabs .nav-link { font-size: 0.85rem; }
+#inbox-page .nav-tabs .badge { font-size: 0.65rem; vertical-align: middle; }
+
+/* v0.7.2: 记忆高亮动画 */
+.memory-highlight {
+    animation: memory-highlight-pulse 2s ease-out;
+    border-radius: 6px;
+}
+@keyframes memory-highlight-pulse {
+    0%   { background-color: var(--bs-warning-bg-subtle); box-shadow: 0 0 0 4px var(--bs-warning-border-subtle); }
+    70%  { background-color: var(--bs-warning-bg-subtle); box-shadow: 0 0 0 4px var(--bs-warning-border-subtle); }
+    100% { background-color: transparent; box-shadow: none; }
+}
+
+/* v0.7.2: 今日回顾主布局 — 自适应填满剩余高度 */
+.daily-review-layout {
+    height: calc(100vh - 190px);
+    min-height: 400px;
+}
+.daily-review-content-col {
+    min-height: 0;
+}
+
+/* v0.7.2: 今日回顾右侧栏 */
+.daily-review-sidebar {
+    width: 220px;
+    flex-shrink: 0;
+}
+.daily-review-sidebar .list-group-item {
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+.daily-review-sidebar .list-group-item:hover {
+    background-color: var(--bs-tertiary-bg);
+    border-left-color: var(--bs-primary);
+}
+.daily-review-sidebar .list-group-item:active {
+    background-color: var(--bs-primary-bg-subtle);
+}

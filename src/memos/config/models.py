@@ -119,65 +119,23 @@ _DEFAULT_SYSTEM_PROMPT = """You are a senior technical analyst. Your task is to 
 Now analyze the conversation below. Follow the extraction rules strictly. Output the JSON array."""
 
 
-_NEW_EXTRACT_SYSTEM_PROMPT = """You are a senior technical analyst. Your task is to extract structured knowledge from the conversation as "memory cards". Each card captures one distinct piece of technical knowledge.
+_NEW_EXTRACT_SYSTEM_PROMPT = """请从以下对话中提取有价值的知识，归类为以下四种类型之一：
+- solution：问题+解决方案（对应报错→修复模式）
+- decision：技术选型/架构决策（有选项对比和理由）
+- lesson：经验教训（可概括的认知沉淀）
+- process：规范流程（可重复的操作步骤）
 
-**TYPE CLASSIFICATION CRITERIA** — Determine the type of each memory:
+输出 JSON 数组，每项包含：
+{
+  "type": "solution|decision|lesson|process",
+  "problem": "问题或背景描述",
+  "solution": "具体做法或知识内容",
+  "insight": "经验总结或最佳实践",
+  "quality_score": 0.0~1.0,
+  "quality_reason": "评分理由"
+}
 
-- **fact**: Objective technical facts confirmed in the conversation (version numbers, API endpoints, configuration parameters, architecture patterns). MUST have direct evidence in the original text.
-- **decision**: Technical decision records. Indicators: multiple options were discussed, trade-offs were made, clear rationale for the final choice was stated.
-- **preference**: User preferences and project conventions. Signal words: "I prefer", "we usually", "from now on", "convention", "preference", "always/never".
-- **todo**: Explicit or implied action items. Include task description. If priority/deadline not mentioned, note "未指定".
-
-**EXTRACTION REQUIREMENTS** — Once type is determined, compose content accordingly:
-
-- **fact**: Quote specific values, endpoints, file names from the conversation. Format: "XX项目使用 YY 技术栈，版本 ZZ"
-- **decision**: Include: background (why now), alternatives considered, final choice with rationale, potential risks. Format: "决策：XXX。备选：A/B/C。选择：A。理由：..."
-- **preference**: Record the preference content and applicable scope. Format: "用户偏好：XXX（适用于 YY 场景）"
-- **todo**: Task description + priority (高/中/低, default "中" if unspecified) + dependencies (omit if none). If no deadline mentioned, note "未指定"
-
-**OUTPUT FORMAT**: ONLY a valid JSON array. No markdown, no extra text. Each card must be in **Chinese**.
-
-Each card:
-- "problem": concise description of the issue or context
-- "solution": what exactly was done or the specific knowledge content
-- "insight": lesson learned, rationale, or best practice
-- "type": one of "fact", "decision", "preference", "todo"
-- "quality_score": float 0-1, evaluating: ①format completeness (required fields present, types correct) ②information density (specific details vs vague statements) ③relevance (directly from conversation, not fabricated)
-- "quality_reason": brief explanation of the score (string)
-
-**Examples** (format only):
-
-~~~json
-[
-  {
-    "problem": "项目后端技术栈选型未确定",
-    "solution": "经讨论选择 FastAPI 作为 Web 框架，版本 0.115.6，搭配 SQLAlchemy 2.0 ORM",
-    "insight": "FastAPI 异步支持好、生态成熟，适合本项目的 API 密集场景",
-    "type": "decision",
-    "quality_score": 0.9,
-    "quality_reason": "包含具体版本号和选型理由，信息完整且直接来自对话"
-  },
-  {
-    "problem": "用户偏好代码风格约定未记录",
-    "solution": "用户偏好：使用双引号、120 字符行宽、ruff 格式化（适用于所有 Python 项目）",
-    "insight": "统一代码风格约定应在项目初期明确，避免后续格式化冲突",
-    "type": "preference",
-    "quality_score": 0.85,
-    "quality_reason": "明确记录偏好内容和适用范围，引用了具体工具名"
-  },
-  {
-    "problem": "需要为 MEMOS 项目添加单元测试覆盖",
-    "solution": "为 extractor.py 的 store_memories 方法编写单元测试",
-    "insight": "优先为核心模块添加测试，保障重构安全",
-    "type": "todo",
-    "quality_score": 0.7,
-    "quality_reason": "任务描述清晰但缺少优先级和截止时间信息"
-  }
-]
-
-~~~
-
-Now analyze the conversation below. Follow the classification criteria and extraction requirements strictly. Output the JSON array."""
+注意：type 只能取 solution、decision、lesson、process 之一，不得使用其他类型。"""
 
 _DEFAULT_CONFLICT_PROMPT = """You are a fact-conflict detector. Given a new piece of information and a list of existing memories, determine if there is any factual contradiction.
 
@@ -361,6 +319,15 @@ class LLMEndpoint(BaseModel):
     api_key: str = ""
     model: str = ""
     prompt_templates: dict[str, str] = Field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        """repr 中遮蔽 api_key，防止日志泄漏敏感信息。"""
+        masked = "******" if self.api_key else ""
+        return (
+            f"LLMEndpoint(name={self.name!r}, api_base={self.api_base!r}, "
+            f"api_key={masked!r}, model={self.model!r}, "
+            f"prompt_templates_count={len(self.prompt_templates)})"
+        )
 
 
 class LLMConfig(BaseModel):

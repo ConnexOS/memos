@@ -237,7 +237,7 @@ class TaskEvalQueue:
             "updated_at": now,
         }
 
-        # 同链检查：相同 project 的现有 active task
+        # 同链检查：相同 project_id 的现有 active task（仅用 UUID 匹配，避免 project 可读名不一致时重复）
         try:
             existing = self._memory.store.get(
                 where={
@@ -245,7 +245,6 @@ class TaskEvalQueue:
                         {"type": "task"},
                         {"project_id": project_id},
                         {"status": "active"},
-                        {"project": structured.get("project", "general")},
                     ]
                 },
                 limit=1,

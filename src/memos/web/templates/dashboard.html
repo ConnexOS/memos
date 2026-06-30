@@ -162,27 +162,9 @@
             {% include "_knowledge_panel.html" %}
         </div>
 
-        <!-- ===== 4. 跟进组 (Follow-up) ===== -->
-        <div class="group-pane" id="group-followup" role="tabpanel">
-            <ul class="nav nav-pills subpanel-pills mb-2 mt-2" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="todo-tab" data-bs-toggle="tab" data-bs-target="#todo-panel" type="button" role="tab">
-                        <i class="bi bi-check2-square me-1"></i>待办
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#watchlist-panel" type="button" role="tab">
-                        <i class="bi bi-eye me-1"></i>待关注
-                    </button>
-                </li>
-            </ul>
-
+        <!-- ===== 4. 待办组 (Todo) ===== -->
+        <div class="group-pane" id="group-todo" role="tabpanel">
             {% include "_todo_panel.html" %}
-
-            <!-- 待关注 -->
-            <div class="tab-pane fade" id="watchlist-panel" role="tabpanel">
-                <div id="watchlist-container"><div class="p-3"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></div>
-            </div>
         </div>
 
         <!-- ===== 5. 配置组 (Settings) ===== -->
@@ -232,161 +214,16 @@
 
 {% include "_modals.html" %}
 
-<!-- 项目管理对话框（与备份管理样式一致） -->
-<div class="modal fade" id="projectMgmtModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h6 class="modal-title"><i class="bi bi-diagram-2 me-1"></i>项目管理</h6>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div id="pm-loading" class="text-center py-5">
-                    <div class="spinner-border spinner-border-sm text-primary"></div>
-                    <span class="ms-2 small">加载中...</span>
-                </div>
-                <div id="pm-content" style="display:none">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover align-middle">
-                            <thead>
-                                <tr>
-                                    <th>项目名称</th>
-                                    <th>ID</th>
-                                    <th>数据分布</th>
-                                    <th style="width:100px">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="pm-table-body"></tbody>
-                        </table>
-                    </div>
-                    <div class="text-muted small mt-2">
-                        <i class="bi bi-info-circle me-1"></i>
-                        删除项目会永久清除所有记忆、待办、建议，不可撤销。
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshProjectManager()"><i class="bi bi-arrow-clockwise me-1"></i>刷新</button>
-                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">关闭</button>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- 删除项目二次确认对话框 -->
-<div class="modal fade" id="pmDeleteConfirmModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-scrollable" style="max-width:480px;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h6 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-1"></i>确认删除</h6>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <p class="mb-1">即将永久删除项目：<strong id="pm-del-name"></strong> <code id="pm-del-id" class="small"></code></p>
-                    <p class="small text-secondary mb-0">数据概览：<span id="pm-del-stats">加载中...</span></p>
-                </div>
-                <div class="alert alert-danger py-2 mb-3 small">
-                    <i class="bi bi-info-circle me-1"></i>
-                    此操作<strong>不可撤销</strong>。
-                </div>
-                <div class="mb-2">
-                    <label class="form-label small">请输入项目名确认删除：</label>
-                    <input type="text" id="pm-del-confirm" class="form-control form-control-sm" placeholder="输入项目名">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button id="pm-del-execute" class="btn btn-sm btn-danger" disabled>
-                    <i class="bi bi-trash me-1"></i>确认删除
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
+<script src="/static/js/nav-modals.js?v={{ version }}"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
 <script src="/static/js/api-client.js?v={{ version }}"></script>
 <script src="/static/js/logout.js?v={{ version }}"></script>
 <script src="/static/js/dashboard.js?v={{ version }}-pm"></script>
 <!-- suggestions.js 已移除：旧管道三建议系统在 v0.7.0 废弃，功能已迁至 dashboard.js -->
 <script src="/static/js/todos.js?v={{ version }}"></script>
 
-<!-- Group navigation hash routing (basic; F2b will provide full JS integration) -->
-<script>
-(function() {
-    'use strict';
-
-    function switchGroup(group) {
-        var tab = document.querySelector('#groupTabs [data-group="' + group + '"]');
-        if (!tab) return;
-
-        // Deactivate all group tabs
-        document.querySelectorAll('#groupTabs [data-group]').forEach(function(t) {
-            t.classList.remove('active');
-        });
-        tab.classList.add('active');
-
-        // Toggle group panes
-        document.querySelectorAll('.group-pane').forEach(function(p) {
-            p.classList.remove('active');
-        });
-        var pane = document.getElementById('group-' + group);
-        if (!pane) return;
-        pane.classList.add('active');
-
-        // Activate the first sub-pill within this group (if none already active)
-        var activePill = pane.querySelector('.subpanel-pills .nav-link.active');
-        if (!activePill) {
-            activePill = pane.querySelector('.subpanel-pills .nav-link');
-        }
-        if (activePill && window.bootstrap) {
-            // Bootstrap Tab.show() 在按钮已有 active 时是 no-op，
-            // 导致依赖 shown.bs.tab 事件加载的懒加载面板（事件看板等）
-            // 在首次打开时永远不会触发数据加载。
-            if (activePill.classList.contains('active')) {
-                var target = document.querySelector(activePill.getAttribute('data-bs-target'));
-                if (target && !target.classList.contains('show')) {
-                    target.classList.add('show', 'active');
-                }
-                // 手动派发 shown.bs.tab 事件，触发面板数据加载
-                activePill.dispatchEvent(new Event('shown.bs.tab', {bubbles: true}));
-            } else {
-                bootstrap.Tab.getOrCreateInstance(activePill).show();
-            }
-        } else if (group === 'memory' && typeof loadMemoryManagement === 'function') {
-            // 记忆组无 subpanel-pills，直接触发加载
-            if (typeof loadMemoryManagement === 'function') {
-                loadMemoryManagement();
-            }
-        }
-    }
-
-    // Click delegation for group tabs
-    document.addEventListener('click', function(e) {
-        var btn = e.target.closest('#groupTabs [data-group]');
-        if (btn) {
-            var g = btn.getAttribute('data-group');
-            switchGroup(g);
-            window.location.hash = g;
-            e.preventDefault();
-        }
-    });
-
-    // Hash change listener
-    window.addEventListener('hashchange', function() {
-        var g = window.location.hash.slice(1) || 'overview';
-        if (document.querySelector('#groupTabs [data-group="' + g + '"]')) {
-            switchGroup(g);
-        }
-    });
-
-    // Initial load from URL hash
-    var initial = window.location.hash.slice(1) || 'overview';
-    if (document.querySelector('#groupTabs [data-group="' + initial + '"]')) {
-        switchGroup(initial);
-    }
-})();
-</script>
+<!-- 导航 Tab 切换逻辑已迁移至 _nav.html（全局共享） -->
 </body>
 </html>

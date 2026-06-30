@@ -1,8 +1,128 @@
 # Changelog
 
-## [0.7.1] — 2026-06-26
+## [0.7.2] — 2026-06-30
 
-### 代号：打磨（Polish）
+> v0.7.X 系列最终版本 —「收官」。覆盖信号枢纽（统一收件箱）、遗留功能完善、候选品质打磨三个维度。
+
+#### Added
+
+- **收件箱全页（/inbox）**
+  - 三区聚合布局：系统通知 / 待关注 / 待修正
+  - `GET /api/inbox/items` — 三区聚合查询
+  - `GET /api/inbox/unread-count` — 统一未读数（30s 轮询）
+  - `POST /api/inbox/dismiss/{id}` — 忽略/已读单条
+  - `POST /api/inbox/dismiss-all` — 批量已读（仅 JSONL 通知区）
+  - 顶栏「🔔收件箱」入口，替代旧下拉通知列表
+  - action→按钮动态映射表（review/renew/view/retry）
+  - 待关注「转为知识」→ 可保存为 L3 知识
+  - 待修正「查看」→ 跳转记忆管理并高亮（或降级跳转）
+
+- **通知类型扩展**
+  - quality_alert — `save_knowledge()` quality_score < 0.5 触发，60min 限频
+  - ttl_warning — lesson 类型过期前 7 天触发
+  - watchlist_update — `remember()` 新增 watchlist 时触发
+  - dedup_failed — 去重 LLM 判断失败时触发
+  - `get_unread_counts()` 去硬编码，动态 JSONL 统计所有类型
+
+- **MCP 写入去重优化**
+  - `save_knowledge()` 异步 LLM 判断（30s 超时），MCP 立即返回不阻塞
+  - 按类型差异化策略：solution（LLM 判同一问题+quality 覆盖）/ decision（总是覆盖）/ lesson（互补共存）/ process（不调 LLM 直接覆盖）
+  - 类型专用去重 Prompt（solution/decision/lesson 三套）
+  - LLM 故障降级：decision 覆盖写入，其余跳过写入
+  - 去重结果写入通知中心（仅失败时发送 dedup_failed）
+
+- **手工提炼 prompt 更新**
+  - 提炼 system prompt 适配新 4 类（solution/decision/lesson/process）
+  - `default@extract` 模板同步更新
+  - 前端提炼结果展示新类型标签，旧类型标签隐藏
+
+- **任务审计弹窗**
+  - `GET /api/tasks/audit?date=YYYY-MM-DD` — 查询指定日期 task done 项
+  - 模态弹窗：日期选择器 + 时间线列表（时间+标题+done 项）
+  - 仅展示 done 项，不展示 todo/blocked
+
+- **今日回顾右侧栏日报列表**
+  - 历史日报列表（日期 + 首行预览），点击加载完整日报
+  - 数据源：`document/日报/{项目名}/*.md` 文件
+
+- **统计卡修复**
+  - `GET /api/v2/stats/pending-archive` — 真实计算 pending_archive_count
+  - 逻辑：`status=forgotten AND forgotten_at + archive_days < now`
+  - 无遗忘/均在时间范围内 → 显示 `0`
+
+- **通知 Badge 泛化**
+  - `_nav.html` 通知 badge 改为从后端动态渲染
+  - 新增通知类型后 badge 自动出现，无需修改前端代码
+
+#### Changed
+
+- **导航重构**
+  - 顶栏「🔔下拉」替换为「🔔收件箱」，点击进入 `/inbox`
+  - 总览组移除「待修正」入口
+  - 「待关注」「待修正」面板从原位置移除，功能迁入收件箱
+  - 待关注区和待修正区不再作为独立面板展示
+
+- **导航标签命名优化**
+  - 短标签改为完整表述：总览→项目总览，对话→对话管理，记忆→记忆管理，待办→待办事项，配置→配置管理
+
+- **JS 模块化拆分**
+  - `dashboard.js` 导航模态框逻辑拆分出 `nav-modals.js`（934 行新文件）
+  - `dashboard.js` 净减少 ~948 行，主文件聚焦统计面板和通用逻辑
+  - `dashboard.html` 精简 163 行（移除大量内联 JS/CSS）
+
+- **`save_knowledge` 默认评分调整**
+  - 默认 `source` 从 `user_instructed` 改为 `auto_save`
+  - 默认 `quality_score` 从 `1.0` 降至 `0.8`
+  - 默认 `quality_reason` 从 "用户直写" 改为 "Claude 主动保存"
+  - 调用方可传入 `metadata` 覆盖上述默认值
+
+- **任务审计前端重构**
+  - `parseTaskEval()` 统一解析来自后端原始 `document` 的 TASK_EVAL
+  - 后端移除正则解析逻辑，改回传 `document` 和 `goal` 字段
+  - 审计时间线配色：暖色调 `[9,12) + [14,18)`（text-warning），冷色调其余时段（text-primary）
+  - 日期选择（`#audit-date`）变更自动触发刷新
+  - 无 done 项时显示「该日任务无已完成项」
+
+- **apiClient 统一迁移**
+  - 今日回顾侧栏列表（`loadDailyReviewSidebar`）改用 `apiClient.request()`
+  - 历史日报加载（`loadDailyReview`）改用 `apiClient.request()`
+  - 任务审计加载（`loadTaskAudit`）改用 `apiClient.request()`
+
+- **项目切换联动增强**
+  - 切换项目时自动刷新今日回顾右侧栏（`loadDailyReviewSidebar`）
+  - 记忆卡底部显示记忆 ID（monospace 样式）
+  - `_todo_panel.html` 70 行改动（待办面板优化）
+  - `_daily_review_panel.html` 30 行改动（回顾面板优化）
+
+#### Fixed
+
+- **`save_knowledge` 异步去重 LLM 调用结构修复**
+  - 后端 LLM 调用对齐 `app.py` 调用模式，消除后台线程导入依赖和锁争用
+  - `_call_llm` 改用 `urllib` 直接调用，避免引入过多导入依赖
+
+- **统计卡待归档数真实计算**：`forgottenCount > 0` 显示 "?" → 真正扫描 `status=forgotten` 超期记忆
+- **MCP 去重异步执行**：不阻塞 MCP 返回，后台线程处理 LLM 判断
+- **提炼结果类型展示**：新 4 类标签展示，旧 7 类标签隐藏但数据保留
+- **收件箱页面 XSS 安全**：`title`、`text` 字段使用 `escapeHtml()` 转义后渲染
+- **通知 action 动态映射**：`view`/`renew`/`retry` 操作的 JS 处理函数实现
+  - `view`：查找通知关联的 `memory_id`，跳转记忆管理
+  - `renew`/`retry`：降级为 `dismiss` 行为
+
+#### Security
+
+- **安全加固 A**
+  - Dashboard 登录会话过期机制（`config.auth.session_ttl`）
+  - 写操作 API 端点鉴权覆盖（未登录返回 401）
+  - 用户输入点 XSS 转义处理（收件箱 `escapeHtml()`、记忆卡 ID 显示）
+  - 配置 API Key 日志遮蔽
+
+#### Removed
+
+- `force_extract()` MCP 工具（管线 A 已重构）
+- `log_complete_turn()` MCP 工具（管线 A 已重构）
+- `scheduler.py` 中 `_check_ttl_warnings` 多参兼容分支（v0.7.1 遗留）
+
+---
 
 > v0.7.0「进化」之后的打磨版本。不引入架构级变更，聚焦 TTL 遗忘 + 技术债务清理 + Dashboard UX 优化。
 
@@ -81,8 +201,6 @@
 ---
 
 ## [0.7.0] — 2026-06-20
-
-### 代号：进化
 
 > Dashboard 新旧集成融合 + 质量提升 + 能力完善。系统开始从反馈中学习，用户可以手工提炼知识、遗忘记忆、旧管线遗迹清理干净。
 
@@ -167,8 +285,6 @@
 ---
 
 ## [0.6.0] — 2026-06-14
-
-### 代号：觉醒
 
 > 新架构的第一次完整落地。五层架构 + 新 6 类知识体系 + Claude Code 主动写记忆。
 

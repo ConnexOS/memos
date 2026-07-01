@@ -17,7 +17,8 @@ def _run_git(args: list[str], repo_path: str | None) -> str:
         result = subprocess.run(
             ["git"] + args,
             capture_output=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
             timeout=10,
         )

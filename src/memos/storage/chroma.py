@@ -37,6 +37,7 @@ def _log_audit(record: dict):
 
 # ── SQLite 时间序查询：where→SQL 翻译 ────────────────────────────
 
+
 def _resolve_value(value):
     """根据 Python 值类型返回 (column, sql_value)。"""
     if isinstance(value, bool):
@@ -90,8 +91,7 @@ def _operator_to_sql(field: str, op: str, operand) -> tuple[str, list]:
     elif op == "$ne":
         col, val = _resolve_value(operand)
         return (
-            f"NOT EXISTS (SELECT 1 FROM embedding_metadata em_ "
-            f"WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
+            f"NOT EXISTS (SELECT 1 FROM embedding_metadata em_ WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
             [field, val],
         )
 
@@ -101,8 +101,7 @@ def _operator_to_sql(field: str, op: str, operand) -> tuple[str, list]:
             logger.warning("$gte 仅支持数值字段, field=%s col=%s", field, col)
             return "", []
         return (
-            f"EXISTS (SELECT 1 FROM embedding_metadata em_ "
-            f"WHERE em_.id = e.id AND em_.key = ? AND em_.{col} >= ?)",
+            f"EXISTS (SELECT 1 FROM embedding_metadata em_ WHERE em_.id = e.id AND em_.key = ? AND em_.{col} >= ?)",
             [field, val],
         )
 
@@ -112,16 +111,14 @@ def _operator_to_sql(field: str, op: str, operand) -> tuple[str, list]:
             logger.warning("$lte 仅支持数值字段, field=%s col=%s", field, col)
             return "", []
         return (
-            f"EXISTS (SELECT 1 FROM embedding_metadata em_ "
-            f"WHERE em_.id = e.id AND em_.key = ? AND em_.{col} <= ?)",
+            f"EXISTS (SELECT 1 FROM embedding_metadata em_ WHERE em_.id = e.id AND em_.key = ? AND em_.{col} <= ?)",
             [field, val],
         )
 
     elif op == "$eq":
         col, val = _resolve_value(operand)
         return (
-            f"EXISTS (SELECT 1 FROM embedding_metadata em_ "
-            f"WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
+            f"EXISTS (SELECT 1 FROM embedding_metadata em_ WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
             [field, val],
         )
 
@@ -141,8 +138,7 @@ def _leaf_to_sql(field: str, condition) -> tuple[str, list]:
     # 简单值等值匹配
     col, val = _resolve_value(condition)
     return (
-        f"EXISTS (SELECT 1 FROM embedding_metadata em_ "
-        f"WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
+        f"EXISTS (SELECT 1 FROM embedding_metadata em_ WHERE em_.id = e.id AND em_.key = ? AND em_.{col} = ?)",
         [field, val],
     )
 

@@ -113,12 +113,14 @@ class TtlForgetTask:
             from ..features.activity_log import _append_event as _log_event
 
             for mid in to_forget:
-                _log_event({
-                    "event": "memory_forgotten",
-                    "timestamp": now,
-                    "memory_id": mid,
-                    "reason": "ttl_expired",
-                })
+                _log_event(
+                    {
+                        "event": "memory_forgotten",
+                        "timestamp": now,
+                        "memory_id": mid,
+                        "reason": "ttl_expired",
+                    }
+                )
         except Exception as e:
             logger.warning("TTL 活动日志写入失败（非致命）: %s", e)
         return len(to_forget)
@@ -132,6 +134,7 @@ class SchedulerThread:
         self._thread = None
         self._generator = briefing_generator
         self._memory = memory_instance
+        self._ttl_task = TtlForgetTask(memory_instance) if memory_instance else None
 
     def start(self):
         if self._running:
@@ -150,6 +153,7 @@ class SchedulerThread:
         from zoneinfo import ZoneInfo
 
         from ..config import get_local_timezone
+
         return datetime.now(ZoneInfo(get_local_timezone()))
 
     def _run_loop(self):
@@ -167,18 +171,21 @@ class SchedulerThread:
         # F7: 每日执行 forgotten→archived 自动归档扫描（仅当天首次）
         self._auto_archive_forgotten()
 
-        # TTL 遗忘扫描
-        ttl_task = TtlForgetTask(self._memory)
+        # TTL 遗忘扫描（复用缓存实例确保 _first_scan_done 持久化）
+        if self._ttl_task is None and self._memory is not None:
+            self._ttl_task = TtlForgetTask(self._memory)
+        ttl_task = self._ttl_task or TtlForgetTask(self._memory)
         try:
             count = ttl_task.run()
             if count > 0:
                 logger.info("TTL 任务完成: %d 条已遗忘", count)
                 from .event_bus import touch_event
+
                 touch_event("memory_stream")
         except Exception as e:
             logger.error("TTL 任务失败: %s", e)
 
-        if now.hour != 23 or now.minute != 0:
+        if now.hour < 23:
             return
 
         today = now.strftime("%Y-%m-%d")
@@ -192,6 +199,7 @@ class SchedulerThread:
             # F9: SSE 事件总线通知
             try:
                 from .event_bus import touch_event as _touch
+
                 _touch("briefing")
             except Exception:
                 logger.debug("调度器: SSE 事件总线通知失败 (briefing)", exc_info=True)
@@ -217,11 +225,13 @@ class SchedulerThread:
             # 2. pending→archived（v0.7.1 新增：30 天未激活的 pending）
             cutoff = time.time() - 30 * 86400
             results = self._memory.store.get(
-                where={"$and": [
-                    {"type": "task"},
-                    {"status": "pending"},
-                    {"updated_at": {"$lte": cutoff}},
-                ]},
+                where={
+                    "$and": [
+                        {"type": "task"},
+                        {"status": "pending"},
+                        {"updated_at": {"$lte": cutoff}},
+                    ]
+                },
                 include=["metadatas"],
             )
             ids = results.get("ids", [])

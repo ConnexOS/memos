@@ -11,7 +11,16 @@ from pathlib import Path
 from ...config import LLMEndpoint, PromptTemplate, config
 
 # 知识卡片类型白名单（Pipeline D 专用）
-VALID_CARD_TYPES = {"bug_fix", "feature_design", "code_optimize", "tech_knowledge", "solution", "decision", "lesson", "process"}
+VALID_CARD_TYPES = {
+    "bug_fix",
+    "feature_design",
+    "code_optimize",
+    "tech_knowledge",
+    "solution",
+    "decision",
+    "lesson",
+    "process",
+}
 
 # 数据库大小缓存（避免 rglob 遍历大量文件）
 _db_size_cache: dict = {"size_mb": 0.0, "cached_at": 0.0}

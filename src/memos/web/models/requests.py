@@ -9,8 +9,6 @@ from ...config import config
 # --- 记忆管理 ---
 
 
-
-
 class CreateMemoryRequest(BaseModel):
     content: str = Field(min_length=1)
     type: str = "solution"
@@ -93,7 +91,7 @@ class BatchCreateCardsRequest(BaseModel):
 class DailyReviewRequest(BaseModel):
     date: str | None = None
     start_ts: float | None = None  # 本地日期起始 UTC 时间戳（由前端按浏览器时区计算）
-    end_ts: float | None = None    # 本地日期结束 UTC 时间戳
+    end_ts: float | None = None  # 本地日期结束 UTC 时间戳
     project_id: str | None = None
     llm_endpoint: str | None = None
     prompt_id: str | None = None

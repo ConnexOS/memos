@@ -63,6 +63,7 @@ class TaskEvalQueue:
     def _get_backlog_path(self) -> Path:
         if self._backlog_path is None:
             from ..config.models import get_memos_home
+
             self._backlog_path = get_memos_home() / _BACKLOG_FILE
         return self._backlog_path
 
@@ -222,11 +223,13 @@ class TaskEvalQueue:
         metadata = {
             "type": "task",
             "source": "auto_extracted",
-            "source_info": json.dumps({
-                "session_id": session_id,
-                "conversation_count": 0,
-                "note": "",
-            }),
+            "source_info": json.dumps(
+                {
+                    "session_id": session_id,
+                    "conversation_count": 0,
+                    "note": "",
+                }
+            ),
             "project_id": project_id,
             "project": structured.get("project", "general"),
             "goal": structured.get("goal", ""),
@@ -270,11 +273,13 @@ class TaskEvalQueue:
                         "goal": structured.get("goal", ""),
                         "confidence": structured.get("confidence", 0.7),
                         "source": "auto_extracted",
-                        "source_info": json.dumps({
-                            "session_id": session_id,
-                            "conversation_count": 0,
-                            "note": "",
-                        }),
+                        "source_info": json.dumps(
+                            {
+                                "session_id": session_id,
+                                "conversation_count": 0,
+                                "note": "",
+                            }
+                        ),
                         "created_at": now,
                         "updated_at": now,
                     }
@@ -296,11 +301,13 @@ class TaskEvalQueue:
                     "goal": structured.get("goal", ""),
                     "confidence": structured.get("confidence", 0.7),
                     "source": "auto_extracted",
-                    "source_info": json.dumps({
-                        "session_id": session_id,
-                        "conversation_count": 0,
-                        "note": "",
-                    }),
+                    "source_info": json.dumps(
+                        {
+                            "session_id": session_id,
+                            "conversation_count": 0,
+                            "note": "",
+                        }
+                    ),
                     "created_at": now,
                     "updated_at": now,
                 }

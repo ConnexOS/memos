@@ -98,11 +98,11 @@ def _make_lifespan(collection_name: str = None):
         if admin_token:
             logger.info("[MEMOS] 首次启动, 已创建 admin 用户. Token (前缀): %s...", admin_token[:8])
             # 完整 token 仅输出到控制台（stderr），不写入日志文件
-            print(f"\n{'='*50}", file=sys.stderr)
+            print(f"\n{'=' * 50}", file=sys.stderr)
             print("  首次启动: 管理员 Token 已生成", file=sys.stderr)
             print(f"  Token: {admin_token}", file=sys.stderr)
             print("  请妥善保存此 Token，它不会再次显示", file=sys.stderr)
-            print(f"{'='*50}\n", file=sys.stderr)
+            print(f"{'=' * 50}\n", file=sys.stderr)
 
         # 注入 ContextMemory 到 server/mcp 模块（NC5 — Phase 2.2）
         from ..server.mcp import set_memory as _inject_memory

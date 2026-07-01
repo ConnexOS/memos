@@ -46,7 +46,7 @@ class VectorStore(ABC):
 
         pairs.sort(key=lambda x: x[1], reverse=True)
         if limit is not None:
-            return [p[0] for p in pairs[offset: offset + limit]]
+            return [p[0] for p in pairs[offset : offset + limit]]
         return [p[0] for p in pairs[offset:]]
 
     @abstractmethod

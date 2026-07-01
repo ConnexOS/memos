@@ -111,7 +111,13 @@ class UsageLogger:
                     if src == "auto_extracted":
                         auto_memories += 1
                     # F5: 新增 manual/watchlist_conversion 源
-                    elif src in ("user_extracted", "user_appended", "user_instructed", "manual", "watchlist_conversion"):
+                    elif src in (
+                        "user_extracted",
+                        "user_appended",
+                        "user_instructed",
+                        "manual",
+                        "watchlist_conversion",
+                    ):
                         manual_memories += 1
             except Exception:
                 logger.debug("用量统计: ChromaDB 源统计查询失败，回退到事件计数", exc_info=True)

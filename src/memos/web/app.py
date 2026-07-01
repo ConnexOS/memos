@@ -28,7 +28,7 @@ from .utils import detect_project_id
 # 注：uvicorn 启动后可能通过 dictConfig 覆盖 root logger 配置，
 # 因此直接为 memos logger 添加显式 handler（不受 uvicorn dictConfig 影响）
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-_memos_logger = logging.getLogger('memos')
+_memos_logger = logging.getLogger("memos")
 _memos_logger.handlers.clear()
 _memos_logger.addHandler(logging.StreamHandler(sys.stderr))
 _memos_logger.handlers[0].setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))

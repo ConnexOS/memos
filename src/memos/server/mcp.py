@@ -409,7 +409,12 @@ _VALID_KNOWLEDGE_TYPES = {
 
 # recall 可查询类型范围（新 6 类）
 _VALID_RECALL_TYPES = {
-    "task", "briefing", "solution", "decision", "lesson", "process",
+    "task",
+    "briefing",
+    "solution",
+    "decision",
+    "lesson",
+    "process",
 }
 
 _MANUAL_SUGGESTION_ALLOWED_KEYS = {
@@ -423,6 +428,7 @@ _MANUAL_SUGGESTION_ALLOWED_KEYS = {
 
 # ==== v0.7.2: MCP 写入去重策略优化 ====
 
+
 def _call_llm(prompt_text: str, timeout_sec: int = 30) -> str | None:
     """直接调用 LLM（使用 urllib 而非项目 LLM 抽象，避免后台线程引入过多导入依赖和锁争用）。
     向 app.py 的 LLM 调用对齐（去除 max_tokens、统一 model 回退、用 config.request_timeout）。
@@ -433,11 +439,13 @@ def _call_llm(prompt_text: str, timeout_sec: int = 30) -> str | None:
         return None
 
     # 与 app.py 对齐：model 回退用 "default"，不传 max_tokens，timeout 用 config 值
-    payload = json.dumps({
-        "model": ep.model or "default",
-        "messages": [{"role": "user", "content": prompt_text}],
-        "temperature": 0.1,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": ep.model or "default",
+            "messages": [{"role": "user", "content": prompt_text}],
+            "temperature": 0.1,
+        }
+    ).encode()
 
     headers = {"Content-Type": "application/json"}
     if ep.api_key:
@@ -477,21 +485,21 @@ def _dedup_llm_judge(text: str, new_mem_type: str, old_text: str, old_id: str, o
             f"旧记忆: {old_text[:500]}\n"
             f"新记忆: {text[:500]}\n"
             f"判断：是否同一错误场景的同一解决方案？若不是，是否互补（不同方案）？\n"
-            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": bool, \"reasoning\": \"...\"}}"
+            f'输出 JSON: {{"is_same": bool, "is_superseding": bool, "reasoning": "..."}}'
         ),
         "decision": (
             f"你是一个知识去重引擎。知识类型：decision（技术选型/架构决策）\n"
             f"旧记忆: {old_text[:500]}\n"
             f"新记忆: {text[:500]}\n"
             f"判断：是否同一决策主题的更新？决策具有迭代性——新决策应覆盖旧决策。\n"
-            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": true, \"reasoning\": \"...\"}}"
+            f'输出 JSON: {{"is_same": bool, "is_superseding": true, "reasoning": "..."}}'
         ),
         "lesson": (
             f"你是一个知识去重引擎。知识类型：lesson（经验教训）\n"
             f"旧记忆: {old_text[:500]}\n"
             f"新记忆: {text[:500]}\n"
             f"判断：是否同一认知角度？教训具有互补性——不同角度应共存。\n"
-            f"输出 JSON: {{\"is_same\": bool, \"is_superseding\": false, \"reasoning\": \"...\"}}"
+            f'输出 JSON: {{"is_same": bool, "is_superseding": false, "reasoning": "..."}}'
         ),
     }
 
@@ -517,12 +525,17 @@ def _dedup_llm_judge(text: str, new_mem_type: str, old_text: str, old_id: str, o
             new_id = mem.remember(text, metadata=new_meta)
             if new_id:
                 mem.supersede_memory(old_id, new_id=new_id)
-                logger.info("save_knowledge 去重判断失败(dedup_failed) -> decision 降级覆盖 old=%s new=%s", old_id[:8], new_id[:8])
+                logger.info(
+                    "save_knowledge 去重判断失败(dedup_failed) -> decision 降级覆盖 old=%s new=%s",
+                    old_id[:8],
+                    new_id[:8],
+                )
         else:
             logger.info("save_knowledge 去重判断失败(dedup_failed) -> %s 跳过写入（LLM 返回空）", new_mem_type)
         # 发送 dedup_failed 通知
         try:
             from ..features.notifications import get_notification_logger
+
             notifier = get_notification_logger()
             notifier.notify(
                 type="dedup_failed",
@@ -537,20 +550,39 @@ def _dedup_llm_judge(text: str, new_mem_type: str, old_text: str, old_id: str, o
     # 按 verdict 处理
     mem = _get_memory()
     if verdict.get("is_superseding"):
-        meta = {**original_meta, "quality_score": original_meta.get("quality_score", 1.0), "quality_reason": "LLM 判覆盖"}
+        meta = {
+            **original_meta,
+            "quality_score": original_meta.get("quality_score", 1.0),
+            "quality_reason": "LLM 判覆盖",
+        }
         new_id = mem.remember(text, metadata=meta)  # 先写入新知识，获取真实 ID
         if new_id:
             mem.supersede_memory(old_id, new_id=new_id)  # 再用真实 ID 覆盖旧知识
-            logger.info("save_knowledge 去重完成 -> 覆盖 old=%s new=%s reasoning=%s", old_id[:8], new_id[:8], verdict.get("reasoning", "")[:80])
+            logger.info(
+                "save_knowledge 去重完成 -> 覆盖 old=%s new=%s reasoning=%s",
+                old_id[:8],
+                new_id[:8],
+                verdict.get("reasoning", "")[:80],
+            )
     elif not verdict.get("is_same"):
         # 不同内容，追加写入
-        meta = {**original_meta, "quality_score": original_meta.get("quality_score", 1.0), "quality_reason": "LLM 判不同"}
+        meta = {
+            **original_meta,
+            "quality_score": original_meta.get("quality_score", 1.0),
+            "quality_reason": "LLM 判不同",
+        }
         mid = mem.remember(text, metadata=meta)
         if mid:
-            logger.info("save_knowledge 去重完成 -> 追加写入 id=%s reasoning=%s", mid[:8], verdict.get("reasoning", "")[:80])
+            logger.info(
+                "save_knowledge 去重完成 -> 追加写入 id=%s reasoning=%s", mid[:8], verdict.get("reasoning", "")[:80]
+            )
     else:
         # 同一 + 不覆盖 → skip
-        logger.info("save_knowledge 去重完成 -> 跳过（与旧记忆 %s 重复） reasoning=%s", old_id[:8], verdict.get("reasoning", "")[:80])
+        logger.info(
+            "save_knowledge 去重完成 -> 跳过（与旧记忆 %s 重复） reasoning=%s",
+            old_id[:8],
+            verdict.get("reasoning", "")[:80],
+        )
 
 
 @mcp.tool()
@@ -615,12 +647,20 @@ def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
             # F7 活动日志埋点（非阻塞）
             try:
                 from ..features.activity_log import log_knowledge_write as _log_kw
-                _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "overwrite"}, project_id=_get_project_id())
+
+                _log_kw(
+                    type_=effective_type,
+                    summary=text[:100],
+                    source="save_knowledge",
+                    extra={"action": "overwrite"},
+                    project_id=_get_project_id(),
+                )
             except Exception:
                 logger.debug("save_knowledge 活动日志埋点(覆盖)失败", exc_info=True)
             # F9: SSE 事件总线通知
             try:
                 from ..features.event_bus import touch_event as _touch
+
                 _touch("memory_stream")
             except Exception:
                 logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
@@ -644,12 +684,20 @@ def save_knowledge(text: str, type: str = None, metadata: dict = None) -> str:
             # F7 活动日志埋点（非阻塞）
             try:
                 from ..features.activity_log import log_knowledge_write as _log_kw
-                _log_kw(type_=effective_type, summary=text[:100], source="save_knowledge", extra={"action": "create"}, project_id=_get_project_id())
+
+                _log_kw(
+                    type_=effective_type,
+                    summary=text[:100],
+                    source="save_knowledge",
+                    extra={"action": "create"},
+                    project_id=_get_project_id(),
+                )
             except Exception:
                 logger.debug("save_knowledge 活动日志埋点(创建)失败", exc_info=True)
             # F9: SSE 事件总线通知
             try:
                 from ..features.event_bus import touch_event as _touch
+
                 _touch("memory_stream")
             except Exception:
                 logger.debug("SSE 事件总线通知失败（非致命）", exc_info=True)
@@ -743,7 +791,8 @@ def _notify_if_low_quality(text: str, memory_id: str, mem_type: str, meta: dict)
                     if age_minutes < rate_limit:
                         logger.debug(
                             "quality_alert 限频跳过: memory_id=%s, age=%.1fmin",
-                            memory_id[:8], age_minutes,
+                            memory_id[:8],
+                            age_minutes,
                         )
                         return
                     break

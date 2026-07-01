@@ -28,7 +28,7 @@ router = APIRouter()
 SESSION_TTL = 1800  # 30 分钟
 
 _TASK_EVAL_PATTERN = re.compile(
-    r'\[TASK_EVAL\]\s*(\{.*?\})\s*\[/TASK_EVAL\]',
+    r"\[TASK_EVAL\]\s*(\{.*?\})\s*\[/TASK_EVAL\]",
     re.DOTALL,
 )
 
@@ -66,9 +66,11 @@ def _get_or_create_session(project_id: str) -> dict:
         from zoneinfo import ZoneInfo
 
         from ..config import get_local_timezone
+
         now_dt = datetime.now(ZoneInfo(get_local_timezone()))
     except Exception:
         from datetime import timezone as _tz
+
         now_dt = datetime.now(_tz.utc)
     session_id = now_dt.strftime("%Y%m%dT%H%M%S")
     data = {"session_id": session_id, "last_active_at": now}
@@ -132,6 +134,7 @@ def _inject_briefing(mem, pid: str) -> str:
     from zoneinfo import ZoneInfo
 
     from ..config import get_local_timezone
+
     now = datetime.now(ZoneInfo(get_local_timezone()))
     today = now.strftime("%Y-%m-%d")
     five_days_ago = (now - timedelta(days=5)).strftime("%Y-%m-%d")
@@ -407,9 +410,7 @@ async def handle_hook_prompt(request: Request) -> dict:
         from ..features.activity_log import log_context_injection as _log_ci
 
         if injected_items:
-            injected_types = list(set(
-                r.get("metadata", {}).get("type", "") or "unknown" for r in injected_items
-            ))
+            injected_types = list(set(r.get("metadata", {}).get("type", "") or "unknown" for r in injected_items))
             meaningful_types = [t for t in injected_types if t not in ("", "unknown")]
             if meaningful_types:
                 _log_ci(
@@ -442,13 +443,15 @@ async def handle_hook_prompt(request: Request) -> dict:
             from ..features.activity_log import _append_event as _ae
 
             latency_ms = round((_time.time() - _HOOK_START) * 1000, 2)
-            _ae({
-                "event": "hook_latency",
-                "hook_type": "prompt",
-                "latency_ms": latency_ms,
-                "summary": f"Prompt Hook 处理耗时 {latency_ms:.0f}ms",
-                "timestamp": _time.time(),
-            })
+            _ae(
+                {
+                    "event": "hook_latency",
+                    "hook_type": "prompt",
+                    "latency_ms": latency_ms,
+                    "summary": f"Prompt Hook 处理耗时 {latency_ms:.0f}ms",
+                    "timestamp": _time.time(),
+                }
+            )
         except Exception:
             logger.debug("Prompt Hook 延迟记录失败", exc_info=True)
 
@@ -532,6 +535,7 @@ async def handle_hook_stop(request: Request) -> dict:
     # F1: AI 引用回检（<5ms，非阻塞）
     try:
         from ..hooks.stop import _check_ai_reference
+
         _check_ai_reference(assistant_msg, project_id or "")
     except Exception:
         logger.debug("Stop Hook 引用回检异常", exc_info=True)
@@ -542,13 +546,15 @@ async def handle_hook_stop(request: Request) -> dict:
             from ..features.activity_log import _append_event as _ae
 
             latency_ms = round((_time.time() - _HOOK_START) * 1000, 2)
-            _ae({
-                "event": "hook_latency",
-                "hook_type": "stop",
-                "latency_ms": latency_ms,
-                "summary": f"Stop Hook 处理耗时 {latency_ms:.0f}ms",
-                "timestamp": _time.time(),
-            })
+            _ae(
+                {
+                    "event": "hook_latency",
+                    "hook_type": "stop",
+                    "latency_ms": latency_ms,
+                    "summary": f"Stop Hook 处理耗时 {latency_ms:.0f}ms",
+                    "timestamp": _time.time(),
+                }
+            )
         except Exception:
             logger.debug("Stop Hook 延迟记录失败", exc_info=True)
 

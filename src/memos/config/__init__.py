@@ -136,7 +136,9 @@ def get_local_timezone(fallback: str = "Asia/Shanghai") -> str:
         if platform.system() == "Windows":
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", "(Get-TimeZone).Id"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             if result.returncode == 0:
                 win_tz = result.stdout.strip()

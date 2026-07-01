@@ -51,6 +51,7 @@ class _SSECleanResponse(StreamingResponse):
         if self.background is not None:
             await self.background()
 
+
 # 内存缓存（5s TTL）
 _activity_log_cache: dict = {"data": None, "cached_at": 0.0, "cache_key": ""}
 
@@ -153,13 +154,15 @@ async def get_watchlist(
             await run_sync(mem.update_memory, item["id"], new_metadata={"status": "archived"})
             archived_count += 1
 
-    return JSONResponse({
-        "items": results,
-        "total": len(results),
-        "page": page,
-        "page_size": page_size,
-        "archived_count": archived_count,
-    })
+    return JSONResponse(
+        {
+            "items": results,
+            "total": len(results),
+            "page": page,
+            "page_size": page_size,
+            "archived_count": archived_count,
+        }
+    )
 
 
 @router.post("/api/v2/watchlist/{memory_id}/structurize")
@@ -339,16 +342,18 @@ async def list_tasks(
     # 按创建时间倒序
     tasks.sort(key=lambda x: x.get("metadata", {}).get("created_at", 0), reverse=True)
 
-    return JSONResponse({
-        "tasks": tasks,
-        "counts": {
-            "active": len(active),
-            "pending": len(pending),
-            "completed": len(completed),
-            "paused_archived": len(paused_archived),
-            "total": len(results),
-        },
-    })
+    return JSONResponse(
+        {
+            "tasks": tasks,
+            "counts": {
+                "active": len(active),
+                "pending": len(pending),
+                "completed": len(completed),
+                "paused_archived": len(paused_archived),
+                "total": len(results),
+            },
+        }
+    )
 
 
 # ==== Task 管理端点 ====
@@ -400,7 +405,9 @@ async def resume_task(task_id: str, request: Request):
         raise HTTPException(404, "该记忆不是 Task 类型")
     current_status = item.get("metadata", {}).get("status", "active")
     logger.info("resume task %s from status=%s", task_id[:8], current_status)
-    await run_sync(mem.store.update, ids=[task_id], metadatas=[{"paused": False, "status": "active", "updated_at": time.time()}])
+    await run_sync(
+        mem.store.update, ids=[task_id], metadatas=[{"paused": False, "status": "active", "updated_at": time.time()}]
+    )
     touch_event("task")
     return {"ok": True, "status": "active"}
 
@@ -414,9 +421,17 @@ async def complete_task(task_id: str, request: Request):
         raise HTTPException(404, "记忆不存在")
     if item.get("metadata", {}).get("type") != "task":
         raise HTTPException(404, "该记忆不是 Task 类型")
-    await run_sync(mem.store.update, ids=[task_id], metadatas=[{
-        "status": "completed", "paused": False, "updated_at": time.time(),
-    }])
+    await run_sync(
+        mem.store.update,
+        ids=[task_id],
+        metadatas=[
+            {
+                "status": "completed",
+                "paused": False,
+                "updated_at": time.time(),
+            }
+        ],
+    )
     touch_event("task")
     return {"ok": True, "status": "completed"}
 
@@ -460,19 +475,21 @@ async def activate_task(task_id: str, request: Request, project_id: str = Depend
         raise HTTPException(404, "该记忆不是 Task 类型")
 
     # 1. 原活跃 task → completed
-    active_tasks = await run_sync(mem.store.get,
-        where={"$and": [{"type": "task"}, {"status": "active"}, {"project_id": project_id}]}
+    active_tasks = await run_sync(
+        mem.store.get, where={"$and": [{"type": "task"}, {"status": "active"}, {"project_id": project_id}]}
     )
     for tid in active_tasks.get("ids", []):
         if tid != task_id:
-            await run_sync(mem.store.update, ids=[tid], metadatas=[
-                {"status": "completed", "paused": False, "updated_at": time.time()}
-            ])
+            await run_sync(
+                mem.store.update,
+                ids=[tid],
+                metadatas=[{"status": "completed", "paused": False, "updated_at": time.time()}],
+            )
 
     # 2. 目标 task → active
-    await run_sync(mem.store.update, ids=[task_id], metadatas=[
-        {"status": "active", "paused": False, "updated_at": time.time()}
-    ])
+    await run_sync(
+        mem.store.update, ids=[task_id], metadatas=[{"status": "active", "paused": False, "updated_at": time.time()}]
+    )
     touch_event("task")
     return {"ok": True, "status": "active"}
 
@@ -523,7 +540,8 @@ async def get_review_list(
 ):
     """获取待修正条目。"""
     mem = _get_memory(request)
-    results = await run_sync(mem.list_memories,
+    results = await run_sync(
+        mem.list_memories,
         type_filter=type or None,
         limit=page_size,
         offset=(page - 1) * page_size,
@@ -553,16 +571,18 @@ def _make_briefing_response(b, display_date: str) -> JSONResponse:
         parsed = json.loads(doc) if isinstance(doc, str) else doc
     except (json.JSONDecodeError, TypeError):
         parsed = {"summary": doc[:200]}
-    return JSONResponse({
-        "exists": True,
-        "quality": meta.get("quality", "simple"),
-        "source": meta.get("source", ""),
-        "delivered": bool(meta.get("delivered", False)),
-        "briefing_id": b.get("id", ""),
-        "date": display_date,
-        "briefing_date": meta.get("briefing_date", display_date),
-        "content": parsed,
-    })
+    return JSONResponse(
+        {
+            "exists": True,
+            "quality": meta.get("quality", "simple"),
+            "source": meta.get("source", ""),
+            "delivered": bool(meta.get("delivered", False)),
+            "briefing_id": b.get("id", ""),
+            "date": display_date,
+            "briefing_date": meta.get("briefing_date", display_date),
+            "content": parsed,
+        }
+    )
 
 
 @router.get("/api/v2/briefing/current")
@@ -640,20 +660,22 @@ async def list_briefing_history(
             summary = (parsed.get("summary") or "")[:200]
         except (json.JSONDecodeError, TypeError):
             summary = (doc or "")[:200]
-        filtered.append({
-            "briefing_date": bd,
-            "id": b.get("id", ""),
-            "quality": meta.get("quality", "simple"),
-            "summary": summary,
-            "session_count": meta.get("session_count", 0),
-            "new_knowledge_count": meta.get("new_knowledge_count", 0),
-            "task_done_count": meta.get("task_done_count", 0),
-            "task_todo_count": meta.get("task_todo_count", 0),
-            "generated_at": meta.get("generated_at", 0),
-        })
+        filtered.append(
+            {
+                "briefing_date": bd,
+                "id": b.get("id", ""),
+                "quality": meta.get("quality", "simple"),
+                "summary": summary,
+                "session_count": meta.get("session_count", 0),
+                "new_knowledge_count": meta.get("new_knowledge_count", 0),
+                "task_done_count": meta.get("task_done_count", 0),
+                "task_todo_count": meta.get("task_todo_count", 0),
+                "generated_at": meta.get("generated_at", 0),
+            }
+        )
     filtered.sort(key=lambda x: x["briefing_date"], reverse=True)
     total = len(filtered)
-    page = filtered[offset:offset + limit]
+    page = filtered[offset : offset + limit]
     return JSONResponse({"briefings": page, "total": total})
 
 
@@ -671,13 +693,15 @@ async def get_briefing_detail(briefing_id: str, request: Request, project_id: st
         content = json.loads(doc) if isinstance(doc, str) else (doc or {})
     except (json.JSONDecodeError, TypeError):
         content = {"summary": (doc or "")[:200]}
-    return JSONResponse({
-        "id": result["ids"][0],
-        "briefing_date": meta.get("briefing_date", ""),
-        "quality": meta.get("quality", "simple"),
-        "summary": (content.get("summary") or "")[:200],
-        "content": content,
-    })
+    return JSONResponse(
+        {
+            "id": result["ids"][0],
+            "briefing_date": meta.get("briefing_date", ""),
+            "quality": meta.get("quality", "simple"),
+            "summary": (content.get("summary") or "")[:200],
+            "content": content,
+        }
+    )
 
 
 @router.delete("/api/v2/briefing/{briefing_id}")
@@ -705,14 +729,19 @@ async def manual_generate_briefing(request: Request, project_id: str = Depends(g
     except Exception:
         pass  # 无 body 时使用默认配置
 
-    logger.info("[简报] === 收到手动生成请求 (date=%s, llm_endpoint=%s, prompt_id=%s, project_id=%s) ===",
-                body.get("date"), body.get("llm_endpoint"), body.get("prompt_id"), project_id)
+    logger.info(
+        "[简报] === 收到手动生成请求 (date=%s, llm_endpoint=%s, prompt_id=%s, project_id=%s) ===",
+        body.get("date"),
+        body.get("llm_endpoint"),
+        body.get("prompt_id"),
+        project_id,
+    )
 
     _generate_full_briefing(
         date=body.get("date"),
         llm_endpoint=body.get("llm_endpoint"),
         prompt_id=body.get("prompt_id"),
-        memory_instance=getattr(request.app.state, 'context_memory', None),
+        memory_instance=getattr(request.app.state, "context_memory", None),
     )
     # F9: SSE 事件总线通知
     try:
@@ -746,17 +775,21 @@ async def sse_health():
     connections = []
     for cid, info in list(_sse_active_connections.items()):
         duration = now - info.get("started_at", now)
-        connections.append({
-            "id": cid,
-            "client": info.get("client", "unknown"),
-            "duration": round(duration, 1),
-            "started_at": info.get("started_at", 0),
-        })
-    return JSONResponse({
-        "active_connections": len(connections),
-        "connections": connections,
-        "shutdown": _sse_shutdown_ev.is_set() if _sse_shutdown_ev else False,
-    })
+        connections.append(
+            {
+                "id": cid,
+                "client": info.get("client", "unknown"),
+                "duration": round(duration, 1),
+                "started_at": info.get("started_at", 0),
+            }
+        )
+    return JSONResponse(
+        {
+            "active_connections": len(connections),
+            "connections": connections,
+            "shutdown": _sse_shutdown_ev.is_set() if _sse_shutdown_ev else False,
+        }
+    )
 
 
 @router.get("/api/v2/events")
@@ -807,7 +840,12 @@ async def sse_event_stream(request: Request):
                 keepalive_counter += 1
                 # 每 5 次 keepalive（约 70s）记录一次活性日志
                 if keepalive_counter % 5 == 0:
-                    logger.info("[SSE#%s] 连接活性: keepalive#%d duration=%.1fs", conn_id, keepalive_counter, time.time() - start_time)
+                    logger.info(
+                        "[SSE#%s] 连接活性: keepalive#%d duration=%.1fs",
+                        conn_id,
+                        keepalive_counter,
+                        time.time() - start_time,
+                    )
                 yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass
@@ -859,6 +897,7 @@ async def monitor_overview(request: Request, project_id: str = ""):
         # 从 project_id 获取：查询参数 → _project_id_ctx（统一出口）→ 空
         if not project_id:
             from ...server.mcp import _project_id_ctx as _pid_ctx
+
             project_id = _pid_ctx.get()
 
         # 读取 injected_records 文件
@@ -875,10 +914,7 @@ async def monitor_overview(request: Request, project_id: str = ""):
         activity_items = []
         try:
             events = read_events(project_id=project_id or None, page=1, page_size=50)
-            activity_items = [
-                e for e in events.get("items", [])
-                if e.get("injection_type") == "manual"
-            ][:5]
+            activity_items = [e for e in events.get("items", []) if e.get("injection_type") == "manual"][:5]
         except Exception:
             pass
 
@@ -921,6 +957,7 @@ async def monitor_overview(request: Request, project_id: str = ""):
             from zoneinfo import ZoneInfo
 
             from ...config import get_local_timezone
+
             now_local = datetime.now(ZoneInfo(get_local_timezone()))
             today_str = now_local.strftime("%Y-%m-%d")
             five_days_ago = (now_local - timedelta(days=5)).strftime("%Y-%m-%d")
@@ -948,12 +985,10 @@ async def monitor_overview(request: Request, project_id: str = ""):
                     briefing_summary = doc[:200]
                 # 注入控制开关：5天内 quality=full 均可切换
                 quality = meta.get("quality", "")
-                briefing_allow_toggle = (quality == "full")
+                briefing_allow_toggle = quality == "full"
 
             # 检查注入记录中是否有 briefing
-            briefing_injected = any(
-                r.get("source_type") == "briefing" for r in injection_records
-            )
+            briefing_injected = any(r.get("source_type") == "briefing" for r in injection_records)
             briefing_status = "injected" if briefing_injected else ("exists" if briefing_date else "none")
         except Exception:
             pass
@@ -983,7 +1018,9 @@ async def monitor_overview(request: Request, project_id: str = ""):
                 },
                 "briefing": {
                     "status": briefing_status,
-                    "label": {"injected": "已注入", "exists": "已生成", "none": "未生成"}.get(briefing_status, "未生成"),
+                    "label": {"injected": "已注入", "exists": "已生成", "none": "未生成"}.get(
+                        briefing_status, "未生成"
+                    ),
                     "date": today_str,
                     "briefing_date": briefing_date,
                     "summary": briefing_summary,
@@ -1024,7 +1061,9 @@ async def monitor_overview(request: Request, project_id: str = ""):
                     "[TASK_EVAL]\n"
                     '{"done": [...], "todo": [...], "blocked": [...]}\n'
                     "[/TASK_EVAL]"
-                ) if project_id else "",
+                )
+                if project_id
+                else "",
             },
         }
 
@@ -1042,7 +1081,8 @@ async def pending_archive_stats(request: Request):
     now = time.time()
     cutoff = now - config.memory.archive_days * 86400
 
-    results = await run_sync(mem.store.get,
+    results = await run_sync(
+        mem.store.get,
         where={"$and": [{"status": "forgotten"}, {"forgotten_at": {"$lte": cutoff}}]},
         include=["metadatas"],
     )
@@ -1080,6 +1120,7 @@ async def toggle_briefing_injection(request: Request, project_id: str = ""):
     mem = request.app.state.context_memory
     if not project_id:
         from ...server.mcp import _project_id_ctx as _pid_ctx
+
         project_id = _pid_ctx.get()
 
     if not project_id:

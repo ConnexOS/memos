@@ -796,7 +796,7 @@ def cmd_reindex(args):
     from ..engine.memory import ContextMemory
 
     mem = ContextMemory()
-    batch_size = getattr(args, 'batch_size', 500)
+    batch_size = getattr(args, "batch_size", 500)
 
     # 阶段一：重建向量索引（ChromaDB HNSW）
     print(f"阶段 1/3: 导出全量数据 (batch_size={batch_size})...")

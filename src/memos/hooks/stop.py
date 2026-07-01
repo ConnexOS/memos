@@ -34,7 +34,7 @@ STATE_FILE = PROJECT_DIR / ".claude" / "conv_state.json"
 SESSION_FILE = PROJECT_DIR / "etc" / ".current_session"
 
 _TASK_EVAL_PATTERN = re.compile(
-    r'\[TASK_EVAL\]\s*(\{.*?\})\s*\[/TASK_EVAL\]',
+    r"\[TASK_EVAL\]\s*(\{.*?\})\s*\[/TASK_EVAL\]",
     re.DOTALL,
 )
 
@@ -119,7 +119,8 @@ def _check_ai_reference(assistant_msg: str, pid: str):
                 )
                 logger.info(
                     "AI 引用检测: id=%s, snippet=%s...",
-                    r.get("id", "")[:8], snippet[:40],
+                    r.get("id", "")[:8],
+                    snippet[:40],
                 )
     except Exception:
         # 静默降级：回检失败不影响 Stop Hook 主流程
@@ -163,11 +164,13 @@ def main():
         import urllib.request
 
         server_url = input_data.get("memos_server_url", "http://127.0.0.1:8000")
-        payload = json.dumps({
-            "task_eval": task_eval,
-            "session_id": session_id,
-            "project_id": _get_project_id(),
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "task_eval": task_eval,
+                "session_id": session_id,
+                "project_id": _get_project_id(),
+            }
+        ).encode("utf-8")
         req = urllib.request.Request(
             f"{server_url}/api/task/eval",
             data=payload,

@@ -18,21 +18,26 @@ V060_KNOWLEDGE_TYPES = {"task", "briefing", "solution", "decision", "lesson", "p
 
 # 全量可检索类型（含旧 7 类兼容，确保向后兼容）
 ALL_RECALL_TYPES = V060_KNOWLEDGE_TYPES | {
-    "fact", "preference", "bug_fix", "feature_design", "code_optimize", "tech_knowledge",
+    "fact",
+    "preference",
+    "bug_fix",
+    "feature_design",
+    "code_optimize",
+    "tech_knowledge",
 }
 
 # F5 source 规范值域（6 种 + 3 种过渡兼容）
 ALLOWED_SOURCES = {
-    "stop_hook",      # Stop Hook 自评采集
-    "manual",         # 用户手工追溯/创建
-    "user_instructed", # Claude Code 自写（save_knowledge）
-    "mcp",            # MCP 工具创建
-    "scheduler",      # Dashboard 定时调度
-    "lazy_hook",      # Hook 兜底生成
-    "remember",       # remember() MCP 工具
+    "stop_hook",  # Stop Hook 自评采集
+    "manual",  # 用户手工追溯/创建
+    "user_instructed",  # Claude Code 自写（save_knowledge）
+    "mcp",  # MCP 工具创建
+    "scheduler",  # Dashboard 定时调度
+    "lazy_hook",  # Hook 兜底生成
+    "remember",  # remember() MCP 工具
     # 过渡期兼容值（v0.8.0 评估移除）
-    "auto_extracted", # 旧提取管线
-    "watchlist_conversion", # 待关注→知识转换
+    "auto_extracted",  # 旧提取管线
+    "watchlist_conversion",  # 待关注→知识转换
 }
 
 # inactive_reason 枚举常量（F5）
@@ -431,19 +436,23 @@ class ContextMemory:
             # F5: 过渡期兼容（status 优先，active 兜底）
             # TODO v0.8.0: 移除 active fallback，迁移完成后仅使用 status
             # 使用 $eq True 而非 $ne False，避免缺失 active 字段的记录误通过检查
-            and_items.append({
-                "$or": [
-                    {"status": {"$ne": "archived"}},
-                    {"active": {"$eq": True}},
-                ]
-            })
+            and_items.append(
+                {
+                    "$or": [
+                        {"status": {"$ne": "archived"}},
+                        {"active": {"$eq": True}},
+                    ]
+                }
+            )
         if exclude_forgotten:
-            and_items.append({
-                "$or": [
-                    {"status": {"$ne": "forgotten"}},
-                    {"active": {"$eq": True}},
-                ]
-            })
+            and_items.append(
+                {
+                    "$or": [
+                        {"status": {"$ne": "forgotten"}},
+                        {"active": {"$eq": True}},
+                    ]
+                }
+            )
         if not clauses and not and_items:
             return None
         if not and_items and len(clauses) == 1:
@@ -521,6 +530,7 @@ class ContextMemory:
         # F7 活动日志埋点（非阻塞）
         try:
             from ..features.activity_log import log_recall as _log_recall
+
             _raw = where.get("type", "all")
             if isinstance(_raw, dict) and "$in" in _raw:
                 _match_types = _raw["$in"]
@@ -1135,6 +1145,7 @@ class ContextMemory:
             if new_status != old_status:
                 try:
                     from ..features.event_bus import touch_event as _touch
+
                     _touch("task")
                 except Exception:
                     logger.debug("SSE 事件总线触发失败（非致命）", exc_info=True)
@@ -1176,6 +1187,7 @@ class ContextMemory:
         if old is None:
             raise ChromaDBError(f"记忆未找到: {mem_id[:8]}...", detail=f"id={mem_id}")
         import time as _time
+
         self.store.update(
             ids=[mem_id],
             metadatas=[{"status": "forgotten", "inactive_reason": inactive_reason, "forgotten_at": _time.time()}],
@@ -1184,11 +1196,14 @@ class ContextMemory:
 
     def supersede_memory(self, old_id: str, new_id: str) -> None:
         """标记旧记忆为被新记忆覆盖。"""
-        self.update_memory(old_id, metadata={
-            "status": "forgotten",
-            "inactive_reason": "superseded",
-            "superseded_by": new_id,
-        })
+        self.update_memory(
+            old_id,
+            metadata={
+                "status": "forgotten",
+                "inactive_reason": "superseded",
+                "superseded_by": new_id,
+            },
+        )
         logger.info("superseded: %s... -> %s...", old_id[:8], new_id[:8])
 
     def archive_memory(self, mem_id: str, inactive_reason: str = "manual_archive"):
@@ -1206,12 +1221,18 @@ class ContextMemory:
         if old is None:
             raise ChromaDBError(f"记忆未找到: {mem_id[:8]}...", detail=f"id={mem_id}")
         import time as _time
-        self.store.update(ids=[mem_id], metadatas=[{
-            "status": "active",
-            "inactive_reason": "",
-            "forgotten_at": 0,
-            "updated_at": _time.time(),  # 重置计时起点，避免恢复后立即被遗忘
-        }])
+
+        self.store.update(
+            ids=[mem_id],
+            metadatas=[
+                {
+                    "status": "active",
+                    "inactive_reason": "",
+                    "forgotten_at": 0,
+                    "updated_at": _time.time(),  # 重置计时起点，避免恢复后立即被遗忘
+                }
+            ],
+        )
         logger.info("restored: %s...", mem_id[:8])
 
     def restore_from_forgotten(self, mem_id: str):
@@ -1343,6 +1364,7 @@ class ContextMemory:
         # F10: SSE 事件总线 — useful_feedback_count 变更触发 feedback 面板刷新
         try:
             from ..features.event_bus import touch_event as _touch
+
             _touch("feedback")
         except Exception:
             logger.debug("SSE 事件总线通知失败（反馈面板刷新）", exc_info=True)

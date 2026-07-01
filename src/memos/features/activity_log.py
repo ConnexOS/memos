@@ -19,12 +19,14 @@ _last_cleanup_time = 0.0
 def _get_timezone() -> str:
     """检测本地时区。"""
     from ..config import get_local_timezone
+
     return get_local_timezone()
 
 
 def _now_in_tz() -> datetime:
     """返回当地时区的当前时间。"""
     from zoneinfo import ZoneInfo
+
     return datetime.now(ZoneInfo(_get_timezone()))
 
 
@@ -132,7 +134,13 @@ def log_knowledge_write(type_: str, summary: str, source: str, extra: dict = Non
         logger.debug("活动日志: SSE 事件总线通知失败 (memory_stream / knowledge_write)", exc_info=True)
 
 
-def log_context_injection(memory_ids: list[str], types: list[str], injection_type: str = "knowledge", extra: dict = None, project_id: str = None):
+def log_context_injection(
+    memory_ids: list[str],
+    types: list[str],
+    injection_type: str = "knowledge",
+    extra: dict = None,
+    project_id: str = None,
+):
     """记录上下文注入事件。injection_type 标记 knowledge(知识注入) 或 manual(用户建议)。"""
     event = {
         "event": "context_injection",

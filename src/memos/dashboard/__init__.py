@@ -37,10 +37,12 @@ def init_scheduler(memory_instance=None):
     try:
         from ..features.performance import record_baseline
 
-        record_baseline({
-            "event": "dashboard_startup",
-            "version": __import__("memos").__version__,
-        })
+        record_baseline(
+            {
+                "event": "dashboard_startup",
+                "version": __import__("memos").__version__,
+            }
+        )
     except Exception as e:
         logger.warning("性能基线记录失败: %s", e)
 
@@ -63,8 +65,23 @@ def _has_substance(records: list, sessions: list) -> bool:
         if s.get("rounds", 0) >= 5:
             return True
 
-    keywords = ["提交", "修复", "修改", "新增", "实现", "重构", "删除", "配置",
-                "commit", "fix", "add", "implement", "refactor", "merge", "test"]
+    keywords = [
+        "提交",
+        "修复",
+        "修改",
+        "新增",
+        "实现",
+        "重构",
+        "删除",
+        "配置",
+        "commit",
+        "fix",
+        "add",
+        "implement",
+        "refactor",
+        "merge",
+        "test",
+    ]
     for r in records:
         doc = r.get("document", "")
         for kw in keywords:
@@ -73,8 +90,7 @@ def _has_substance(records: list, sessions: list) -> bool:
     return False
 
 
-def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_id: str = None,
-                            memory_instance=None):
+def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_id: str = None, memory_instance=None):
     """完整简报生成函数（供 SchedulerThread + 手动触发调用）。
 
     date: YYYY-MM-DD，指定生成哪天的简报。不传或传今日则用 [今日00:00, now] 范围。
@@ -106,6 +122,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     from zoneinfo import ZoneInfo
 
     from ..config import get_local_timezone
+
     tz_str = get_local_timezone()
     now = datetime.now(ZoneInfo(tz_str))
     today_str = now.strftime("%Y-%m-%d")
@@ -131,6 +148,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     _pid = None
     try:
         from ..server.mcp import _project_id_ctx as _pid_ctx
+
         _pid = _pid_ctx.get()
         logger.info("[简报] 当前 project_id: %s", _pid)
     except Exception:
@@ -145,8 +163,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     records = []
     sessions = []
     try:
-        records = _get_conversation_records(mem, tz_str, project_id=_pid,
-                                            start_ts=data_start, end_ts=data_end)
+        records = _get_conversation_records(mem, tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end)
         sessions = _group_sessions(records)
         logger.info("[简报] 会话数据: %d 条记录, %d 个会话", len(records), len(sessions))
     except Exception as e:
@@ -155,8 +172,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     # 3. 知识（仅 lesson+process，按项目+时间范围过滤）
     new_knowledge = []
     try:
-        new_knowledge = _get_today_knowledge(mem, tz_str, project_id=_pid,
-                                             start_ts=data_start, end_ts=data_end)
+        new_knowledge = _get_today_knowledge(mem, tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end)
         logger.info("[简报] 新增知识: %d 条 (lesson+process)", len(new_knowledge) if new_knowledge else 0)
     except Exception as e:
         logger.warning("获取知识写入失败: %s", e)
@@ -166,10 +182,10 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     git_diff_text = ""
     try:
         from memos.features.git_collector import get_git_diff, get_git_log
+
         git_log_text = get_git_log(briefing_date)
         git_diff_text = get_git_diff()
-        logger.info("[简报] Git 数据: log=%d chars, diff=%d chars",
-                    len(git_log_text), len(git_diff_text))
+        logger.info("[简报] Git 数据: log=%d chars, diff=%d chars", len(git_log_text), len(git_diff_text))
     except Exception as e:
         logger.warning("获取 Git 数据失败: %s", e)
 
@@ -196,7 +212,9 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
             logger.error("LLM 调用失败: %s", e)
             return None
 
-    logger.info("[简报] === 开始生成简报 (date=%s, llm_endpoint=%s, prompt_id=%s) ===", briefing_date, llm_endpoint, prompt_id)
+    logger.info(
+        "[简报] === 开始生成简报 (date=%s, llm_endpoint=%s, prompt_id=%s) ===", briefing_date, llm_endpoint, prompt_id
+    )
     logger.info("[简报] 任务数据: %s", json.dumps(task_data, ensure_ascii=False)[:500])
 
     # 质量门禁：双维度判定
@@ -205,23 +223,28 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
 
     if total_rounds < 5 or not has_content:
         logger.info("[简报] 质量门禁触发: rounds=%d, has_substance=%s", total_rounds, has_content)
-        briefing = build_fallback_briefing(memory_instance=mem, tz_str=tz_str, project_id=_pid,
-                                           start_ts=data_start, end_ts=data_end)
+        briefing = build_fallback_briefing(
+            memory_instance=mem, tz_str=tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end
+        )
         briefing["source"] = "auto_extracted"
     else:
-        logger.info("[简报] 调用 LLM 生成完整简报 (llm_endpoint=%s, prompt_id=%s)...",
-                    llm_endpoint, prompt_id)
+        logger.info("[简报] 调用 LLM 生成完整简报 (llm_endpoint=%s, prompt_id=%s)...", llm_endpoint, prompt_id)
         briefing = build_full_briefing(
-            task_data, sessions, new_knowledge,
-            git_log_text, git_diff_text,  # 新增参数
+            task_data,
+            sessions,
+            new_knowledge,
+            git_log_text,
+            git_diff_text,  # 新增参数
             _llm_call,
-            llm_endpoint=llm_endpoint, prompt_id=prompt_id,
+            llm_endpoint=llm_endpoint,
+            prompt_id=prompt_id,
             date_str=data_date_label,
         )
         if briefing is None:
             logger.warning("[简报] LLM 简报生成失败，降级为兜底模板")
-            briefing = build_fallback_briefing(memory_instance=mem, tz_str=tz_str, project_id=_pid,
-                                               start_ts=data_start, end_ts=data_end)
+            briefing = build_fallback_briefing(
+                memory_instance=mem, tz_str=tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end
+            )
             briefing["source"] = "auto_extracted"
         else:
             briefing["source"] = "auto_extracted"
@@ -233,9 +256,12 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     briefing["new_knowledge_count"] = len(new_knowledge) if new_knowledge else 0
     briefing["session_count"] = len(sessions) if sessions else 0
 
-    logger.info("[简报] 生成结果: quality=%s, source=%s, summary=%s",
-                briefing.get("quality", "?"), briefing.get("source", "?"),
-                json.dumps(briefing.get("summary", ""), ensure_ascii=False)[:200])
+    logger.info(
+        "[简报] 生成结果: quality=%s, source=%s, summary=%s",
+        briefing.get("quality", "?"),
+        briefing.get("source", "?"),
+        json.dumps(briefing.get("summary", ""), ensure_ascii=False)[:200],
+    )
 
     briefing_text = json.dumps(briefing, ensure_ascii=False)
     briefing_meta = {

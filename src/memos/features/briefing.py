@@ -21,6 +21,7 @@ _SESSION_INTERVAL = 1800  # 30 分钟
 def _get_tz(tz_str: str = "Asia/Shanghai"):
     """获取 zoneinfo 时区对象。"""
     from zoneinfo import ZoneInfo
+
     return ZoneInfo(tz_str)
 
 
@@ -33,8 +34,9 @@ def _today_timestamp_range(tz_str: str = "Asia/Shanghai") -> tuple[float, float]
     return today_start, today_end
 
 
-def _get_conversation_records(memory_instance, tz_str: str = "Asia/Shanghai", project_id: str = None,
-                              start_ts: float = None, end_ts: float = None) -> list[dict]:
+def _get_conversation_records(
+    memory_instance, tz_str: str = "Asia/Shanghai", project_id: str = None, start_ts: float = None, end_ts: float = None
+) -> list[dict]:
     """从 ChromaDB 查询 user_input 和 assistant_output 记录。
 
     返回按时间戳升序排列的记录列表，每条含 id/document/metadata。
@@ -101,21 +103,19 @@ def _group_sessions(records: list[dict], interval_seconds: int = _SESSION_INTERV
         s_records = session["records"]
         start_ts = float(s_records[0].get("metadata", {}).get("timestamp", 0))
         end_ts = float(s_records[-1].get("metadata", {}).get("timestamp", 0))
-        user_msgs = [
-            r.get("document", "") for r in s_records
-            if r.get("metadata", {}).get("type") == "user_input"
-        ]
+        user_msgs = [r.get("document", "") for r in s_records if r.get("metadata", {}).get("type") == "user_input"]
         assistant_msgs = [
-            r.get("document", "") for r in s_records
-            if r.get("metadata", {}).get("type") == "assistant_output"
+            r.get("document", "") for r in s_records if r.get("metadata", {}).get("type") == "assistant_output"
         ]
-        result.append({
-            "start_time": start_ts,
-            "end_time": end_ts,
-            "rounds": max(len(user_msgs), len(assistant_msgs)),
-            "user_messages": user_msgs,
-            "assistant_messages": assistant_msgs,
-        })
+        result.append(
+            {
+                "start_time": start_ts,
+                "end_time": end_ts,
+                "rounds": max(len(user_msgs), len(assistant_msgs)),
+                "user_messages": user_msgs,
+                "assistant_messages": assistant_msgs,
+            }
+        )
 
     return result
 
@@ -137,6 +137,7 @@ def _get_active_task(memory_instance) -> dict:
     _pid = None
     try:
         from ..server.mcp import _project_id_ctx as _pid_ctx
+
         _pid = _pid_ctx.get()
     except Exception:
         pass
@@ -185,8 +186,9 @@ def _get_today_task(memory_instance, tz_str: str = "Asia/Shanghai") -> dict:
     return _get_active_task(memory_instance)
 
 
-def _get_today_knowledge(memory_instance, tz_str: str = "Asia/Shanghai", project_id: str = None,
-                         start_ts: float = None, end_ts: float = None) -> list[dict]:
+def _get_today_knowledge(
+    memory_instance, tz_str: str = "Asia/Shanghai", project_id: str = None, start_ts: float = None, end_ts: float = None
+) -> list[dict]:
     """从 ChromaDB 查询知识写入记录（lesson/process）。
 
     start_ts/end_ts 可选：指定时间范围。不传则使用今日范围。
@@ -239,8 +241,9 @@ def build_fallback_briefing(
     """
     # ── 新路径：使用 ChromaDB 数据 ──
     if memory_instance is not None:
-        return _build_fallback_from_chromadb(memory_instance, today_task, tz_str, project_id=project_id,
-                                             start_ts=start_ts, end_ts=end_ts)
+        return _build_fallback_from_chromadb(
+            memory_instance, today_task, tz_str, project_id=project_id, start_ts=start_ts, end_ts=end_ts
+        )
 
     # ── 无 memory_instance 时的最小兜底（旧路径已移除）──
     task = today_task or {}
@@ -269,16 +272,16 @@ def _build_fallback_from_chromadb(
 ) -> dict:
     """使用 ChromaDB 数据构建兜底简报（F8 新路径）。"""
     # 1. 获取对话记录
-    records = _get_conversation_records(memory_instance, tz_str, project_id=project_id,
-                                        start_ts=start_ts, end_ts=end_ts)
+    records = _get_conversation_records(
+        memory_instance, tz_str, project_id=project_id, start_ts=start_ts, end_ts=end_ts
+    )
     total_rounds = len(records)
 
     # 2. 获取任务
     task = task_data or _get_today_task(memory_instance)
 
     # 3. 获取知识写入
-    knowledge_list = _get_today_knowledge(memory_instance, project_id=project_id,
-                                          start_ts=start_ts, end_ts=end_ts)
+    knowledge_list = _get_today_knowledge(memory_instance, project_id=project_id, start_ts=start_ts, end_ts=end_ts)
 
     # 4. 会话分组
     sessions = _group_sessions(records)
@@ -304,12 +307,16 @@ def _build_fallback_from_chromadb(
 
     # 任务状态
     task_status = (
-        f"项目: {task.get('project', '')}\n"
-        f"目标: {task.get('goal', '')}\n"
-        f"已完成: {done}\n"
-        f"待完成: {todo}\n"
-        f"阻塞: {blocked}"
-    ) if task and task.get("project") else "无活跃任务"
+        (
+            f"项目: {task.get('project', '')}\n"
+            f"目标: {task.get('goal', '')}\n"
+            f"已完成: {done}\n"
+            f"待完成: {todo}\n"
+            f"阻塞: {blocked}"
+        )
+        if task and task.get("project")
+        else "无活跃任务"
+    )
 
     # 会话摘要
     key_events = []
@@ -317,10 +324,7 @@ def _build_fallback_from_chromadb(
         start_str = time.strftime("%H:%M", time.localtime(session["start_time"]))
         end_str = time.strftime("%H:%M", time.localtime(session["end_time"]))
         user_preview = session["user_messages"][0][:80] if session["user_messages"] else ""
-        key_events.append(
-            f"[会话{i + 1}] {start_str}-{end_str}: "
-            f"{session['rounds']} 轮 | {user_preview}"
-        )
+        key_events.append(f"[会话{i + 1}] {start_str}-{end_str}: {session['rounds']} 轮 | {user_preview}")
 
     # 知识摘要
     new_knowledge = []
@@ -358,18 +362,13 @@ def _build_minimal_briefing(
     next_steps = task.get("next_steps", [])
 
     task_progress = f"{len(done)}/{len(done) + len(todo)}" if task and (done or todo) else "无任务进度"
-    summary = (
-        f"今日对话极少（共 {total_rounds} 轮），"
-        f"当前任务进度：{task_progress}，"
-        f"新增知识 {knowledge_count} 条"
-    )
+    summary = f"今日对话极少（共 {total_rounds} 轮），当前任务进度：{task_progress}，新增知识 {knowledge_count} 条"
 
     task_status = (
-        f"项目: {task.get('project', '')}\n"
-        f"已完成: {done}\n"
-        f"待完成: {todo}\n"
-        f"阻塞: {blocked}"
-    ) if task and task.get("project") else "无活跃任务"
+        (f"项目: {task.get('project', '')}\n已完成: {done}\n待完成: {todo}\n阻塞: {blocked}")
+        if task and task.get("project")
+        else "无活跃任务"
+    )
 
     plan_tomorrow = "根据当前进度，下一步计划：" + "；".join(next_steps) if task and next_steps else "无"
 
@@ -389,12 +388,12 @@ def build_full_briefing(
     task_data: dict,
     sessions: list,
     new_knowledge: list,
-    git_log_text: str,       # 新增 v0.7.1 F10
-    git_diff_text: str,      # 新增 v0.7.1 F10
+    git_log_text: str,  # 新增 v0.7.1 F10
+    git_diff_text: str,  # 新增 v0.7.1 F10
     llm_caller: Callable,
     llm_endpoint: str = None,
     prompt_id: str = None,
-    date_str: str = None,    # 简报日期 YYYY-MM-DD，用于提示文案
+    date_str: str = None,  # 简报日期 YYYY-MM-DD，用于提示文案
 ) -> dict | None:
     """调用 MEMOS LLM 生成完整简报（quality=full）。
 
@@ -425,7 +424,9 @@ def build_full_briefing(
         for j, msg in enumerate(assistant_msgs[:2]):
             sessions_text += f"助手: {msg[:200]}\n"
 
-    knowledge_text = json.dumps([k.get("document", "") for k in new_knowledge], ensure_ascii=False) if new_knowledge else "无"
+    knowledge_text = (
+        json.dumps([k.get("document", "") for k in new_knowledge], ensure_ascii=False) if new_knowledge else "无"
+    )
 
     git_log_display = git_log_text[:2000] if git_log_text else "当日无提交"
     git_diff_display = git_diff_text[:500] if git_diff_text else "工作区无未提交变更"
@@ -467,8 +468,10 @@ def build_full_briefing(
 def _get_briefing_system_prompt(llm_endpoint: str = None, prompt_id: str = None) -> str:
     """获取简报系统提示词，优先从 PromptManager 加载。"""
     from memos.config.models import _DEFAULT_BRIEFING_SYSTEM_PROMPT
+
     try:
         from memos.config.loader import get_config as _get_cfg
+
         tpl = _get_cfg().prompt.get_for_endpoint(llm_endpoint or "default", "briefing")
         if tpl:
             return tpl.effective_prompt().system_prompt

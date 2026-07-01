@@ -1,4 +1,5 @@
 """v0.7.2: 收件箱 API — 三区聚合查询 + 未读轮询 + 批量操作"""
+
 from __future__ import annotations
 
 import logging

@@ -114,7 +114,11 @@ def get_prompt(request: Request, id: str, _admin: None = Depends(_require_admin)
         if _is_valid_endpoint(ep_name):
             # 使用类型对应的缺省回退模板
             fallback_id = f"fallback@{template_type}"
-            default_t = config.prompt.get(fallback_id) or config.prompt.get(f"default@{template_type}") or config.prompt.get("fallback")
+            default_t = (
+                config.prompt.get(fallback_id)
+                or config.prompt.get(f"default@{template_type}")
+                or config.prompt.get("fallback")
+            )
             if default_t:
                 result = _template_to_dict(default_t)
                 result["id"] = id
@@ -343,7 +347,9 @@ def activate_prompt_version(request: Request, id: str, version: str, _admin: Non
 
 
 @router.post("/api/prompts/{id}/rollback/{version}")
-def rollback_prompt(request: Request, id: str, version: str, req: RollbackRequest = None, _admin: None = Depends(_require_admin)):
+def rollback_prompt(
+    request: Request, id: str, version: str, req: RollbackRequest = None, _admin: None = Depends(_require_admin)
+):
     """回滚到指定历史版本（生成新版本）"""
     pc = config.prompt
     t = pc.get(id)

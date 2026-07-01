@@ -78,8 +78,10 @@ class ProjectAwareSSEWrapper:
             _set_session_project_id(pid, project_name)
 
             # 提取 token：优先 X-Auth-Token header（MCP SSE 也支持），回落 URL query param
-            headers = {k.decode("utf-8", errors="replace").lower(): v.decode("utf-8", errors="replace")
-                       for k, v in scope.get("headers", [])}
+            headers = {
+                k.decode("utf-8", errors="replace").lower(): v.decode("utf-8", errors="replace")
+                for k, v in scope.get("headers", [])
+            }
             token = headers.get("x-auth-token") or (params.get("token") or [None])[0]
             if token:
                 user = verify_token_against_users(token)

@@ -52,9 +52,20 @@ def _schema_model_hash() -> str:
     """
     h = hashlib.md5()
     for cls in [
-        ChromaConfig, ModelConfig, LLMConfig, MemoryConfig, SuggestionConfig,
-        DashboardConfig, ServerConfig, AuthConfig, BackupConfig, NotificationConfig,
-        AgentConfig, HookProxyConfig, MemoryTypesConfig, ActivityLogConfig,
+        ChromaConfig,
+        ModelConfig,
+        LLMConfig,
+        MemoryConfig,
+        SuggestionConfig,
+        DashboardConfig,
+        ServerConfig,
+        AuthConfig,
+        BackupConfig,
+        NotificationConfig,
+        AgentConfig,
+        HookProxyConfig,
+        MemoryTypesConfig,
+        ActivityLogConfig,
     ]:
         h.update(json.dumps(cls.model_json_schema(), sort_keys=True).encode())
     return h.hexdigest()[:12]

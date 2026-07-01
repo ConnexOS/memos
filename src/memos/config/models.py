@@ -583,9 +583,12 @@ class MemoryConfig(BaseModel):
     ttl_default_expire_hours: int = Field(default=720, ge=1)
     ttl_type_overrides: dict = Field(
         default_factory=lambda: {
-            "task": 48, "briefing": 24,
-            "solution": 0, "decision": 0,
-            "lesson": 2160, "process": 0,
+            "task": 48,
+            "briefing": 24,
+            "solution": 0,
+            "decision": 0,
+            "lesson": 2160,
+            "process": 0,
         }
     )
     ttl_scan_batch_size: int = Field(default=100, ge=10, le=1000)

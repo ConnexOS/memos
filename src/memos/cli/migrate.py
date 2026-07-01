@@ -37,9 +37,9 @@ AUTO_MAP = {
 
 # 需要手动确认的类型及可选目标
 MANUAL_CONFIRM_TYPES = {
-    "fact": ["solution", "lesson"],         # 用户决定 → solution 或 → lesson
-    "feature_design": ["solution"],         # → solution
-    "tech_knowledge": ["lesson"],           # → lesson
+    "fact": ["solution", "lesson"],  # 用户决定 → solution 或 → lesson
+    "feature_design": ["solution"],  # → solution
+    "tech_knowledge": ["lesson"],  # → lesson
 }
 
 # 删除类型 (无新版本等效类型)
@@ -290,11 +290,7 @@ def _do_confirm(mem: ContextMemory):
             print("  → 无效输入，已跳过")
         print()
 
-    print(
-        f"处理完成: 映射 {mapped_count} 条,"
-        f" 删除 {deleted_count} 条,"
-        f" 跳过 {skip_count} 条"
-    )
+    print(f"处理完成: 映射 {mapped_count} 条, 删除 {deleted_count} 条, 跳过 {skip_count} 条")
 
 
 # ============================================================
@@ -347,11 +343,7 @@ def _do_mapping_file(mem: ContextMemory, mapping_file: str):
             print(f"  [OK] {mem_id[:12]}...: {old_t} → {new_type}")
         count += 1
 
-    print(
-        f"\n处理完成: 映射 {count} 条,"
-        f" 未找到 {not_found} 条,"
-        f" 无效类型 {invalid_type} 条"
-    )
+    print(f"\n处理完成: 映射 {count} 条, 未找到 {not_found} 条, 无效类型 {invalid_type} 条")
 
 
 # ============================================================
@@ -376,11 +368,13 @@ def _do_export_backup(mem: ContextMemory, backup_file: str):
 
     records = []
     for i in range(len(data["ids"])):
-        records.append({
-            "id": data["ids"][i],
-            "document": data["documents"][i],
-            "metadata": data["metadatas"][i],
-        })
+        records.append(
+            {
+                "id": data["ids"][i],
+                "document": data["documents"][i],
+                "metadata": data["metadatas"][i],
+            }
+        )
 
     if not records:
         print("没有旧类型记忆需要备份。")
@@ -421,11 +415,13 @@ def _auto_backup_before_cleanup(mem: ContextMemory, backup_path: Path) -> bool:
 
     records = []
     for i in range(len(data["ids"])):
-        records.append({
-            "id": data["ids"][i],
-            "document": data["documents"][i],
-            "metadata": data["metadatas"][i],
-        })
+        records.append(
+            {
+                "id": data["ids"][i],
+                "document": data["documents"][i],
+                "metadata": data["metadatas"][i],
+            }
+        )
 
     export = {
         "format_version": "1.0",
@@ -495,6 +491,7 @@ def _do_cleanup(mem: ContextMemory):
         print("未找到已有备份，将在清理前自动创建...")
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         from ..config import get_memos_home
+
         auto_backup = Path(get_memos_home()) / "etc" / f"migration-backup-{ts}.json"
         backup_ok = _auto_backup_before_cleanup(mem, auto_backup)
 
@@ -518,7 +515,9 @@ def _do_cleanup(mem: ContextMemory):
 # ============================================================
 
 # 要彻底清除的旧类型（OLD_TYPES - KEEP_TYPES，即不含 decision）
-PURGE_TYPES = OLD_TYPES - KEEP_TYPES  # {"fact", "preference", "bug_fix", "feature_design", "code_optimize", "tech_knowledge"}
+PURGE_TYPES = (
+    OLD_TYPES - KEEP_TYPES
+)  # {"fact", "preference", "bug_fix", "feature_design", "code_optimize", "tech_knowledge"}
 
 # 旧类型转移标记键
 MIGRATED_MARKERS = {MIGRATED_FROM_KEY, MIGRATED_AT_KEY}
@@ -545,11 +544,13 @@ def _scan_purgeable(mem: ContextMemory) -> list[dict]:
             meta = meta or {}
             t = meta.get("type", "")
             if t in PURGE_TYPES:
-                all_records.append({
-                    "id": mid,
-                    "document": docs[i] if i < len(docs) else "",
-                    "metadata": meta,
-                })
+                all_records.append(
+                    {
+                        "id": mid,
+                        "document": docs[i] if i < len(docs) else "",
+                        "metadata": meta,
+                    }
+                )
         offset += len(ids)
     return all_records
 
@@ -808,9 +809,7 @@ def _do_rollback(mem: ContextMemory, backup_file: str):
     if cleaned > 0:
         print(f"  [OK] 已清理 {cleaned} 条迁移状态标记。")
 
-    confirm = input(
-        f"\n确认回滚? 这将覆盖 {len(records)} 条记忆的当前数据 (y/N): "
-    ).strip().lower()
+    confirm = input(f"\n确认回滚? 这将覆盖 {len(records)} 条记忆的当前数据 (y/N): ").strip().lower()
     if confirm != "y":
         print("已取消。")
         return

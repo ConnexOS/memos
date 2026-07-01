@@ -680,7 +680,7 @@ def list_daily_reviews(request: Request, project_id: str = Depends(get_project_i
         preview = ""
         try:
             content = fp.read_text("utf-8", errors="replace")[:200]
-            preview = content.split('\n')[0][:80]
+            preview = content.split("\n")[0][:80]
         except Exception:
             pass
         files.append({"name": fp.name, "preview": preview, "date": fp.stem})
@@ -728,12 +728,14 @@ def task_audit(
     day_end = day_start + 86400
 
     results = mem.store.get(
-        where={"$and": [
-            {"type": "task"},
-            {"updated_at": {"$gte": day_start}},
-            {"updated_at": {"$lt": day_end}},
-            {"project_id": project_id},
-        ]},
+        where={
+            "$and": [
+                {"type": "task"},
+                {"updated_at": {"$gte": day_start}},
+                {"updated_at": {"$lt": day_end}},
+                {"project_id": project_id},
+            ]
+        },
         include=["metadatas", "documents"],
     )
 
@@ -741,12 +743,14 @@ def task_audit(
     for i, mid in enumerate(results.get("ids", [])):
         doc = (results["documents"] or [""] * len(results["ids"]))[i]
         meta = (results["metadatas"] or [{}] * len(results["ids"]))[i]
-        items.append({
-            "id": mid,
-            "timestamp": meta.get("timestamp", 0),
-            "goal": meta.get("goal", "") or (doc or "")[:60],
-            "document": doc,  # 交给前端 parseTaskEval() 统一解析
-        })
+        items.append(
+            {
+                "id": mid,
+                "timestamp": meta.get("timestamp", 0),
+                "goal": meta.get("goal", "") or (doc or "")[:60],
+                "document": doc,  # 交给前端 parseTaskEval() 统一解析
+            }
+        )
 
     # 按时间从近到远排序
     items.sort(key=lambda x: x["timestamp"], reverse=True)

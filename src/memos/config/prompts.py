@@ -425,7 +425,7 @@ class PromptManager(BaseModel):
                     "旧记忆: {old_text}\n"
                     "新记忆: {new_text}\n"
                     "判断：是否同一错误场景的同一解决方案？若不是，是否互补（不同方案）？\n"
-                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": bool, \"reasoning\": \"...\"}"
+                    '输出 JSON: {"is_same": bool, "is_superseding": bool, "reasoning": "..."}'
                 ),
                 "template_type": "dedup",
                 "description": "solution 类型专用去重判断",
@@ -436,7 +436,7 @@ class PromptManager(BaseModel):
                     "旧记忆: {old_text}\n"
                     "新记忆: {new_text}\n"
                     "判断：是否同一决策主题的更新？决策具有迭代性——新决策应覆盖旧决策。\n"
-                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": true, \"reasoning\": \"...\"}"
+                    '输出 JSON: {"is_same": bool, "is_superseding": true, "reasoning": "..."}'
                 ),
                 "template_type": "dedup",
                 "description": "decision 类型专用去重判断",
@@ -447,7 +447,7 @@ class PromptManager(BaseModel):
                     "旧记忆: {old_text}\n"
                     "新记忆: {new_text}\n"
                     "判断：是否同一认知角度？教训具有互补性——不同角度应共存。\n"
-                    "输出 JSON: {\"is_same\": bool, \"is_superseding\": false, \"reasoning\": \"...\"}"
+                    '输出 JSON: {"is_same": bool, "is_superseding": false, "reasoning": "..."}'
                 ),
                 "template_type": "dedup",
                 "description": "lesson 类型专用去重判断",

@@ -90,7 +90,7 @@ def _has_substance(records: list, sessions: list) -> bool:
     return False
 
 
-def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_id: str = None, memory_instance=None):
+def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_id: str = None, memory_instance=None, project_id=None):
     """完整简报生成函数（供 SchedulerThread + 手动触发调用）。
 
     date: YYYY-MM-DD，指定生成哪天的简报。不传或传今日则用 [今日00:00, now] 范围。
@@ -100,6 +100,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     v0.7.1: 增加 llm_endpoint/prompt_id 参数 + 全流程调试日志。
     v0.7.1 bugfix: 增加 memory_instance 参数，不依赖模块全局 _memory_instance。
     v0.7.1 F10: Git 数据采集 + active task + 双维度质量门禁。
+    v0.7.2 bugfix: 增加 project_id 参数，不再从 _project_id_ctx 隐式读取。
     """
     from datetime import datetime
 
@@ -144,26 +145,18 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
         briefing_date = today_str
         data_date_label = today_str
 
-    # 获取当前 project_id（简报上下文所属项目）
-    _pid = None
-    try:
-        from ..server.mcp import _project_id_ctx as _pid_ctx
-
-        _pid = _pid_ctx.get()
-        logger.info("[简报] 当前 project_id: %s", _pid)
-    except Exception:
-        pass
+    logger.info("[简报] 项目: %s", project_id or "（无项目）")
 
     # ── 数据采集（v0.7.1 F10 增强；支持按日期/时间段过滤）──
 
     # 1. Task 数据（active 优先）
-    task_data = _get_active_task(mem)
+    task_data = _get_active_task(mem, project_id=project_id)
 
     # 2. 对话记录（按项目+时间范围过滤）
     records = []
     sessions = []
     try:
-        records = _get_conversation_records(mem, tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end)
+        records = _get_conversation_records(mem, tz_str, project_id=project_id, start_ts=data_start, end_ts=data_end)
         sessions = _group_sessions(records)
         logger.info("[简报] 会话数据: %d 条记录, %d 个会话", len(records), len(sessions))
     except Exception as e:
@@ -172,7 +165,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     # 3. 知识（仅 lesson+process，按项目+时间范围过滤）
     new_knowledge = []
     try:
-        new_knowledge = _get_today_knowledge(mem, tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end)
+        new_knowledge = _get_today_knowledge(mem, tz_str, project_id=project_id, start_ts=data_start, end_ts=data_end)
         logger.info("[简报] 新增知识: %d 条 (lesson+process)", len(new_knowledge) if new_knowledge else 0)
     except Exception as e:
         logger.warning("获取知识写入失败: %s", e)
@@ -224,7 +217,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
     if total_rounds < 5 or not has_content:
         logger.info("[简报] 质量门禁触发: rounds=%d, has_substance=%s", total_rounds, has_content)
         briefing = build_fallback_briefing(
-            memory_instance=mem, tz_str=tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end
+            memory_instance=mem, tz_str=tz_str, project_id=project_id, start_ts=data_start, end_ts=data_end
         )
         briefing["source"] = "auto_extracted"
     else:
@@ -243,7 +236,7 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
         if briefing is None:
             logger.warning("[简报] LLM 简报生成失败，降级为兜底模板")
             briefing = build_fallback_briefing(
-                memory_instance=mem, tz_str=tz_str, project_id=_pid, start_ts=data_start, end_ts=data_end
+                memory_instance=mem, tz_str=tz_str, project_id=project_id, start_ts=data_start, end_ts=data_end
             )
             briefing["source"] = "auto_extracted"
         else:
@@ -271,13 +264,12 @@ def _generate_full_briefing(date: str = None, llm_endpoint: str = None, prompt_i
         "quality": briefing.get("quality", "full"),
         "generated_at": time.time(),
         "delivered": False,
+        "project_id": project_id if project_id else "",
         "task_done_count": briefing["task_done_count"],
         "task_todo_count": briefing["task_todo_count"],
         "new_knowledge_count": briefing["new_knowledge_count"],
         "session_count": briefing["session_count"],
     }
-    if _pid:
-        briefing_meta["project_id"] = _pid
     try:
         mem.remember(briefing_text, metadata=briefing_meta)
         logger.info("简报已写入 (%s, quality=%s)", briefing_date, briefing.get("quality", "unknown"))

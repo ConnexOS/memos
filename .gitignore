@@ -69,5 +69,5 @@ fix_tests.py
 inspect_test.py
 recover_file.py
 upgrade-memos.ps1
-
 etc/config.json
+.claude/

@@ -17,12 +17,12 @@ from memos.config import (
     PromptVersion,
     _DEFAULT_CONFLICT_PROMPT,
     _DEFAULT_SYSTEM_PROMPT,
-    _NEW_EXTRACT_SYSTEM_PROMPT,
     _get_prompts_index,
     _get_template_dir,
     _get_template_file,
     get_memos_home,
 )
+from memos.config.prompts import _get_default_extract_prompt
 
 
 @pytest.fixture
@@ -47,22 +47,22 @@ class TestNewExtractTemplate:
     """验证新版 default@extract 模板内容"""
 
     def test_new_extract_contains_four_types(self, fresh_manager):
-        """新版 default@extract 含 fact/decision/preference/todo 四种类型指引"""
+        """新版 default@extract 含 solution/decision/lesson/process 四种类型指引"""
         t = fresh_manager.get("default@extract")
         assert t is not None, "default@extract 模板应存在"
         prompt = t.draft.system_prompt
-        assert "fact" in prompt
+        assert "solution" in prompt
         assert "decision" in prompt
-        assert "preference" in prompt
-        assert "todo" in prompt
+        assert "lesson" in prompt
+        assert "process" in prompt
         assert "quality_score" in prompt
 
     def test_new_extract_has_type_classification_criteria(self, fresh_manager):
-        """新版 default@extract 包含类型判断标准"""
+        """新版 default@extract 包含类型枚举和 quality_score"""
         t = fresh_manager.get("default@extract")
         prompt = t.draft.system_prompt
-        assert "TYPE CLASSIFICATION CRITERIA" in prompt
-        assert "EXTRACTION REQUIREMENTS" in prompt
+        assert 'solution" | "decision" | "lesson" | "process' in prompt
+        assert "quality_score" in prompt
 
     def test_new_extract_differs_from_old_default(self, fresh_manager):
         """新版系统提示词与旧版内容不同"""
@@ -248,7 +248,7 @@ class TestUserCustomizationProtection:
         mgr = PromptManager(templates=[t])
         mgr.ensure_default_template()
         updated = mgr.get("default@extract")
-        assert updated.draft.system_prompt.strip() == _NEW_EXTRACT_SYSTEM_PROMPT.strip()
+        assert updated.draft.system_prompt.strip() == _get_default_extract_prompt().strip()
 
     def test_is_user_customized_detects_modification(self):
         """_is_user_customized 正确检测修改"""

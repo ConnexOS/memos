@@ -1,10 +1,4 @@
-# tests/test_unified/test_mcp_project_id.py
-
 """集成测试：验证带 project_id 路径的 MCP 请求正确路由"""
-
-import os
-
-os.environ["MEMOS_AUTH_DISABLE"] = "true"
 
 import pytest
 

@@ -130,9 +130,6 @@ const LEGACY_TYPES = ['fact', 'preference', 'bug_fix', 'feature_design', 'code_o
 // v0.7.1: Task 和简报类型由专用面板管理，从记忆管理查询中剔除
 const NEW_6_TYPES = ['solution', 'decision', 'lesson', 'process'];
 
-// 全量类型列表（用于查询全部）
-const ALL_MM_TYPES = [...NEW_6_TYPES, ...LEGACY_TYPES];
-
 function getTypeLabel(type) {
     return NEW_TYPE_LABELS[type] || TYPE_LABELS[type] || type || '?';
 }
@@ -868,7 +865,7 @@ async function loadMemoryManagement() {
         params.append('type', state.mm.typeFilter);
     } else {
         // 全部类型
-        ALL_MM_TYPES.forEach(t => params.append('type', t));
+        NEW_6_TYPES.forEach(t => params.append('type', t));
     }
 
     // 搜索 keyword 使用 /api/search 而非 /api/memories
@@ -1036,7 +1033,7 @@ async function updateMMStats() {
             const params = new URLSearchParams();
             params.set('limit', status === 'forgotten' ? '100' : '1');
             params.set('status', status);
-            ALL_MM_TYPES.forEach(t => params.append('type', t));
+            NEW_6_TYPES.forEach(t => params.append('type', t));
             return '/api/memories?' + params.toString();
         }
         const [activeData, forgottenResp, archivedData, pendingData] = await Promise.all([
@@ -2068,6 +2065,17 @@ async function loadLLMEndpointsForExtract() {
 
 let _extractPromptInfo = null;
 
+// 提取卡片字段标签：按类型映射，避免统一三段式误导人类审核员
+function _extractFieldLabels(type) {
+    const map = {
+        solution: ['问题', '方案', '洞察'],
+        decision: ['背景', '决策', '理由'],
+        process:  ['场景', '步骤', '备注'],
+        lesson:   ['场景', '做法', '洞察'],
+    };
+    return map[type] || ['问题', '方案', '洞察'];
+}
+
 function renderExtractReview(cards, promptInfo) {
     const container = document.getElementById('extract-review-list');
     const empty = document.getElementById('extract-review-empty');
@@ -2094,6 +2102,7 @@ function renderExtractReview(cards, promptInfo) {
 
     container.innerHTML = cards.map((card, idx) => {
         const typeBadge = renderTypeBadge(card.type);
+        const labels = _extractFieldLabels(card.type);
         return `<div class="border rounded p-2 mb-2 extract-card" data-index="${idx}">
             <div class="d-flex align-items-start gap-2 mb-1">
                 <input type="checkbox" class="form-check-input extract-card-checkbox mt-1" checked data-index="${idx}">
@@ -2107,9 +2116,9 @@ function renderExtractReview(cards, promptInfo) {
                             <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="toggleExtractCard(${idx})" title="拒绝"><i class="bi bi-x-lg"></i></button>
                         </div>
                     </div>
-                    <div class="small mb-1"><strong>问题：</strong>${escapeHtml(card.problem)}</div>
-                    <div class="small mb-1"><strong>方案：</strong>${escapeHtml(card.solution)}</div>
-                    <div class="small text-secondary"><strong>洞察：</strong>${escapeHtml(card.insight)}</div>
+                    <div class="small mb-1"><strong>${labels[0]}：</strong>${escapeHtml(card.problem)}</div>
+                    <div class="small mb-1"><strong>${labels[1]}：</strong>${escapeHtml(card.solution)}</div>
+                    <div class="small text-secondary"><strong>${labels[2]}：</strong>${escapeHtml(card.insight)}</div>
                 </div>
             </div>
         </div>`;
@@ -2136,7 +2145,8 @@ function toggleExtractCard(idx) {
 function copyExtractCard(idx) {
     const card = _extractCards[idx];
     if (!card) return;
-    const text = `【${card.type || 'solution'}】\n问题：${card.problem || ''}\n方案：${card.solution || ''}\n洞察：${card.insight || ''}`;
+    const labels = _extractFieldLabels(card.type);
+    const text = `【${card.type || 'solution'}】\n${labels[0]}：${card.problem || ''}\n${labels[1]}：${card.solution || ''}\n${labels[2]}：${card.insight || ''}`;
     copyToClipboard(text, '知识卡片');
 }
 
@@ -2148,7 +2158,19 @@ function editExtractCard(idx) {
     document.getElementById('extract-edit-problem').value = card.problem || '';
     document.getElementById('extract-edit-solution').value = card.solution || '';
     document.getElementById('extract-edit-insight').value = card.insight || '';
+    // 根据类型切换编辑框标签
+    _updateExtractEditLabels(card.type || 'solution');
     new bootstrap.Modal(document.getElementById('extractEditModal')).show();
+}
+
+function _updateExtractEditLabels(type) {
+    var labels = _extractFieldLabels(type);
+    var l0 = document.getElementById('extract-edit-label-0');
+    var l1 = document.getElementById('extract-edit-label-1');
+    var l2 = document.getElementById('extract-edit-label-2');
+    if (l0) l0.textContent = labels[0];
+    if (l1) l1.textContent = labels[1];
+    if (l2) l2.textContent = labels[2];
 }
 
 document.getElementById('extract-edit-save-btn')?.addEventListener('click', function() {
@@ -2161,6 +2183,11 @@ document.getElementById('extract-edit-save-btn')?.addEventListener('click', func
     renderExtractReview(_extractCards);
     bootstrap.Modal.getInstance(document.getElementById('extractEditModal')).hide();
     toast('卡片已更新', 'success');
+});
+
+// 编辑模态框中切换类型时同步更新字段标签
+document.getElementById('extract-edit-type')?.addEventListener('change', function() {
+    _updateExtractEditLabels(this.value);
 });
 
 document.getElementById('extract-select-all-btn')?.addEventListener('click', function() {
@@ -2188,12 +2215,13 @@ document.getElementById('extract-copy-selected-btn')?.addEventListener('click', 
         const idx = parseInt(cb.getAttribute('data-index'));
         const card = _extractCards[idx];
         if (!card) return;
+        const labels = _extractFieldLabels(card.type);
         parts.push([
             `--- 卡片 ${i + 1} ---`,
             `类型：${card.type || 'tech_knowledge'}`,
-            `问题：${card.problem || ''}`,
-            `方案：${card.solution || ''}`,
-            `洞察：${card.insight || ''}`,
+            `${labels[0]}：${card.problem || ''}`,
+            `${labels[1]}：${card.solution || ''}`,
+            `${labels[2]}：${card.insight || ''}`,
         ].join('\n'));
     });
     copyToClipboard(parts.join('\n\n'), `选中的 ${parts.length} 条知识卡片`);
@@ -2756,7 +2784,7 @@ function renderPromptTemplateList() {
 
     // 类型标签颜色映射
     const typeColors = {extract:'bg-info', 'daily-review':'bg-success', 'default':'bg-secondary'};
-    const typeNames = {extract:'提炼', 'daily-review':'日报', 'default':'通用'};
+    const typeNames = {extract:'提炼', 'daily-review':'日报', briefing:'简报', 'default':'通用'};
 
     let html = '';
     filtered.forEach(t => {
@@ -4472,7 +4500,8 @@ async function loadTaskSequence(date) {
             filtered = tasks.filter(function(t) {
                 var meta = t.metadata || {};
                 var ts = meta.updated_at || meta.timestamp || 0;
-                var taskDate = new Date(ts * 1000).toISOString().split('T')[0];
+                var d = new Date(ts * 1000);
+                var taskDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
                 return taskDate === date;
             });
             if (filtered.length === 0) {
@@ -4683,8 +4712,9 @@ async function toggleTaskMode() {
 
 /* 任务审计弹窗 */
 function openTaskAudit() {
-    // 设置默认日期为今天
-    const today = new Date().toISOString().split('T')[0];
+    // 设置默认日期为今天（本地日期，避免 toISOString UTC 错位）
+    const _now = new Date();
+    const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
     document.getElementById('audit-date').value = today;
     loadTaskAudit();
     new bootstrap.Modal(document.getElementById('taskAuditModal')).show();

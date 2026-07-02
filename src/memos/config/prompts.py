@@ -19,11 +19,146 @@ from .models import (
     _DEFAULT_PROMPT_FRAME,
     _DEFAULT_SYSTEM_PROMPT,
     _DEFAULT_TODO_EXTRACT_PROMPT,
-    _NEW_EXTRACT_SYSTEM_PROMPT,
     get_memos_home,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_default_extract_prompt() -> str:
+    """返回手工提炼的默认 system_prompt（分类优先英文版，输出中文）。
+
+    由 PromptManager 管理，不硬编码为模块级常量，支持运行时热更新。
+    """
+    return (
+        "You are a senior technical analyst. Extract valuable knowledge from the conversation "
+        "as structured cards, classified into one of four types.\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "CLASSIFICATION TREE (priority order)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "For each distinct knowledge point, classify using this decision chain:\n"
+        "\n"
+        '1. solution — "error → fix" pattern\n'
+        "   Is there a specific error, bug, or problem with a concrete fix?\n"
+        "   → The conversation mentions an error/issue AND how it was resolved.\n"
+        "   → Includes: bug fixes, error workarounds, dependency conflicts.\n"
+        "   → Use problem/solution/insight as: error description / fix steps / why it works.\n"
+        "   → NOT: general feature design or abstract lessons.\n"
+        "\n"
+        '2. decision — "choice between alternatives"\n'
+        "   Was a deliberate technology/architecture/methodology choice made?\n"
+        "   → Multiple options discussed, with reasoning for the final pick.\n"
+        "   → Includes: library selection, architectural decisions, tool choices.\n"
+        '   → "暂定/暂时" → lower confidence; firm conclusion → confident.\n'
+        "   → Use problem/solution/insight as: decision context / what was chosen / rationale.\n"
+        "   → NOT: routine configuration changes without deliberation.\n"
+        "\n"
+        '3. process — "repeatable workflow"\n'
+        "   Is there a step-by-step procedure or operational norm?\n"
+        '   → User explicitly says "记住这个流程" or describes a multi-step workflow.\n'
+        "   → Includes: build/release steps, setup procedures, operational checklists.\n"
+        "   → Use problem/solution/insight as: scenario / ordered steps / caveats & notes.\n"
+        "   → Must be stable enough to follow again verbatim.\n"
+        "\n"
+        '4. lesson — "generalizable insight"\n'
+        "   Is there a takeaway that applies beyond the immediate context?\n"
+        "   → Best practices, pitfalls to avoid, patterns that emerged during work.\n"
+        "   → Includes: coding patterns, debugging strategies, design principles.\n"
+        "   → Use problem/solution/insight as: triggering situation / what was done / the insight.\n"
+        "   → NOT: tied to one specific error (→ solution) or one specific choice (→ decision).\n"
+        "\n"
+        "5. If none of the above clearly match → skip (do not force a type).\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "EXTRACTION RULES\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "1. Do NOT assume a fixed number of cards — 0, 1, or multiple are all valid.\n"
+        "2. First identify ALL distinct knowledge points, then decide merge vs split:\n"
+        "   - MERGE only if multiple details address the SAME root cause.\n"
+        "   - SPLIT if the conversation covers independent topics.\n"
+        "3. Pay attention to the start of the conversation — the initial request often describes a feature design from scratch.\n"
+        "4. Skip purely conversational turns, greetings, status checks, and already-stored content.\n"
+        "5. Each card's fields (problem/solution/insight) must be in Chinese.\n"
+        "6. Do NOT merge across different conversation turns if they address separate problems.\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "QUALITY SCORING (0.0 ~ 1.0)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "| Dimension     | High (0.8+)                              | Low (< 0.5)                      |\n"
+        "|---------------|------------------------------------------|----------------------------------|\n"
+        "| Completeness  | problem + solution + insight all present | Missing key fields               |\n"
+        "| Specificity   | Has concrete details (code, config, etc) | Vague generalities               |\n"
+        "| Reusability   | Likely to help in future similar work    | One-off context only             |\n"
+        "\n"
+        "Type-specific guidance:\n"
+        "- solution: 0.8+ if error pattern + root cause + fix are all clearly stated.\n"
+        "- decision:  0.8+ if alternatives compared + selection reason recorded.\n"
+        "- process:   0.8+ if steps are concrete, ordered, and repeatable.\n"
+        "- lesson:    0.8+ if insight is actionable, not just \"be careful\".\n"
+        "\n"
+        "quality_reason: One short sentence in Chinese explaining the score.\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "OUTPUT FORMAT\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "ONLY a valid JSON array of card objects. No markdown, no extra text, no code fences.\n"
+        "\n"
+        "Each card:\n"
+        "{\n"
+        '  "type": "solution" | "decision" | "lesson" | "process",\n'
+        '  "problem":  "问题/背景/场景描述（中文）",\n'
+        '  "solution": "具体做法/选择/步骤（中文）",\n'
+        '  "insight":  "经验总结/最佳实践/注意事项（中文）",\n'
+        '  "quality_score": 0.0~1.0,\n'
+        '  "quality_reason": "评分理由（中文，一句话）"\n'
+        "}\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "EXAMPLES (format reference only)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "[\n"
+        "  {\n"
+        '    "type": "solution",\n'
+        '    "problem": "uvicorn 热重载时 CSS 修改不生效，浏览器始终显示旧版本",\n'
+        '    "solution": "在 HTML head 中添加 <meta http-equiv=\\\"Cache-Control\\" content=\\\"no-cache\\">，同时在静态 URL 后附加版本参数 ?v={{timestamp}}",\n'
+        '    "insight": "开发阶段应禁用浏览器缓存或使用版本化 URL，避免修改后看不到效果",\n'
+        "    \"quality_score\": 0.85,\n"
+        '    "quality_reason": "问题清晰、解决方案具体、insight 具有通用性"\n'
+        "  },\n"
+        "  {\n"
+        '    "type": "decision",\n'
+        '    "problem": "需要为 Dashboard 选择前端模板引擎",\n'
+        '    "solution": "选用 Jinja2（FastAPI 内置）+ Bootstrap 5，不引入 React/Vue",\n'
+        '    "insight": "无前端团队的项目应优先选用服务端渲染，降低复杂度",\n'
+        "    \"quality_score\": 0.9,\n"
+        '    "quality_reason": "有明确选项对比和选择理由"\n'
+        "  },\n"
+        "  {\n"
+        '    "type": "process",\n'
+        '    "problem": "发布操作缺少标准化流程，每次手动上线容易遗漏步骤",\n'
+        '    "solution": "1) git pull → 2) npm run build → 3) pytest --runslow → 4) git tag → 5) git push origin --tags",\n'
+        '    "insight": "标准化的发布流程可以减少人为失误，且方便新人快速上手",\n'
+        "    \"quality_score\": 0.75,\n"
+        '    "quality_reason": "步骤清晰可重复，但缺乏回滚预案"\n'
+        "  },\n"
+        "  {\n"
+        '    "type": "lesson",\n'
+        '    "problem": "ChromaDB 持久化模式下多进程同时写入导致数据损坏",\n'
+        '    "solution": "严格限制 MCP Server 和 Dashboard 不能同时对同一项目写入，通过文件锁协调",\n'
+        '    "insight": "ChromaDB PersistentClient 不是线程安全的，所有写入必须串行化",\n'
+        "    \"quality_score\": 0.88,\n"
+        '    "quality_reason": "经验具有跨项目参考价值，根因明确"\n'
+        "  }\n"
+        "]\n"
+        "\n"
+        "Now analyze the conversation below and output the JSON array."
+    )
 
 
 def _get_prompts_file() -> Path:
@@ -391,7 +526,7 @@ class PromptManager(BaseModel):
             self._ensure_template(tpl_id, name, tpl_type, sys_prompt)
 
         new_defaults = [
-            ("default@extract", "知识提炼 (v0.7.2)", "extract", _NEW_EXTRACT_SYSTEM_PROMPT),
+            ("default@extract", "知识提炼 (v0.7.2)", "extract", _get_default_extract_prompt()),
             ("default@daily-review", "今日回顾 (默认)", "daily-review", _DEFAULT_DAILY_REVIEW_PROMPT),
             ("default@briefing", "简报生成 (默认)", "briefing", _DEFAULT_BRIEFING_SYSTEM_PROMPT),
             ("default@conflict", "冲突检测", "conflict", _DEFAULT_CONFLICT_PROMPT),
@@ -406,6 +541,7 @@ class PromptManager(BaseModel):
                 or "**fact**" in existing.draft.system_prompt
                 or "**preference**" in existing.draft.system_prompt
                 or "**todo**" in existing.draft.system_prompt
+                or "请从以下对话中提取" in existing.draft.system_prompt
             ):
                 existing.draft.system_prompt = sys_prompt
                 existing.save_draft(system_prompt=sys_prompt)

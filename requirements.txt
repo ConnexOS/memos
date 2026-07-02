@@ -1,3 +1,0 @@
-# 使用 pyproject.toml 管理依赖
-# pip install -e . 即可安装所有运行时依赖
-# pip install -e ".[test]" 安装额外测试依赖

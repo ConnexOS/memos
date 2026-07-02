@@ -18,6 +18,27 @@ _SESSION_INTERVAL = 1800  # 30 分钟
 # ─── 辅助函数：从 ChromaDB 获取今日数据 ───
 
 
+def _resolve_project_name(memory_instance, project_id: str) -> str | None:
+    """从最近一条 assistant_output 的 metadata 中解析 project_name。
+
+    用于 task 数据中 project 字段降级兜底——历史 task 的 project 可能为
+    "general"，但对话记录始终携带真实 project_name。
+    """
+    if not memory_instance or not project_id:
+        return None
+    try:
+        results = memory_instance.list_memories(
+            type_filter="assistant_output",
+            project_id=project_id,
+            limit=1,
+        )
+        if results:
+            return results[0].get("metadata", {}).get("project_name", None)
+    except Exception as e:
+        logger.debug("解析 project_name 失败: %s", e)
+    return None
+
+
 def _get_tz(tz_str: str = "Asia/Shanghai"):
     """获取 zoneinfo 时区对象。"""
     from zoneinfo import ZoneInfo
@@ -120,7 +141,7 @@ def _group_sessions(records: list[dict], interval_seconds: int = _SESSION_INTERV
     return result
 
 
-def _get_active_task(memory_instance) -> dict:
+def _get_active_task(memory_instance, project_id=None) -> dict:
     """获取当前活跃 task，按 status=active 查询。
 
     查询优先级：
@@ -129,24 +150,17 @@ def _get_active_task(memory_instance) -> dict:
 
     ChromaDB get() 必须显式 include documents 和 metadatas
     （默认不返回 documents，缺少会导致静默 None 而非报错）。
+
+    project_id: 项目 ID。由调用方传入，不再从 context var 读取。
     """
     if memory_instance is None:
         return {}
-
-    # 获取当前 project_id（简报上下文中的活跃项目）
-    _pid = None
-    try:
-        from ..server.mcp import _project_id_ctx as _pid_ctx
-
-        _pid = _pid_ctx.get()
-    except Exception:
-        pass
 
     try:
         # 1. 优先查 status=active（使用 list_memories 确保 project_id 过滤）
         active_results = memory_instance.list_memories(
             type_filter="task",
-            project_id=_pid,
+            project_id=project_id,
             where={"status": "active"},
             limit=1,
         )
@@ -155,16 +169,22 @@ def _get_active_task(memory_instance) -> dict:
             task_data = json.loads(doc_raw) if isinstance(doc_raw, str) else doc_raw
             task_data["_status"] = "active"
             task_data["_status_label"] = "进行中"
+            # project 降级兜底：文档中为 general 时从对话记录取真实项目名
+            if task_data.get("project") in ("general", "") and project_id:
+                task_data["project"] = _resolve_project_name(memory_instance, project_id) or task_data.get("project", "general")
             return task_data
 
         # 2. 无活跃 → 取最近一条
-        recent = memory_instance.list_memories(type_filter="task", project_id=_pid, limit=1)
+        recent = memory_instance.list_memories(type_filter="task", project_id=project_id, limit=1)
         if recent:
             doc = recent[0].get("document", "{}")
             meta_status = recent[0].get("metadata", {}).get("status", "unknown")
             task_data = json.loads(doc) if isinstance(doc, str) else (doc or {})
             if not isinstance(task_data, dict):
                 task_data = {}
+            # project 降级兜底
+            if task_data.get("project") in ("general", "") and project_id:
+                task_data["project"] = _resolve_project_name(memory_instance, project_id) or task_data.get("project", "general")
             if meta_status == "completed":
                 task_data["_status"] = "completed"
                 task_data["_status_label"] = "已全部完成"
@@ -181,9 +201,9 @@ def _get_active_task(memory_instance) -> dict:
     return {}
 
 
-def _get_today_task(memory_instance, tz_str: str = "Asia/Shanghai") -> dict:
+def _get_today_task(memory_instance, tz_str: str = "Asia/Shanghai", project_id=None) -> dict:
     """从 ChromaDB 查询最近的任务记录（active 优先）。"""
-    return _get_active_task(memory_instance)
+    return _get_active_task(memory_instance, project_id=project_id)
 
 
 def _get_today_knowledge(
@@ -278,7 +298,7 @@ def _build_fallback_from_chromadb(
     total_rounds = len(records)
 
     # 2. 获取任务
-    task = task_data or _get_today_task(memory_instance)
+    task = task_data or _get_today_task(memory_instance, project_id=project_id)
 
     # 3. 获取知识写入
     knowledge_list = _get_today_knowledge(memory_instance, project_id=project_id, start_ts=start_ts, end_ts=end_ts)

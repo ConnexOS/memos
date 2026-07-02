@@ -742,6 +742,7 @@ async def manual_generate_briefing(request: Request, project_id: str = Depends(g
         llm_endpoint=body.get("llm_endpoint"),
         prompt_id=body.get("prompt_id"),
         memory_instance=getattr(request.app.state, "context_memory", None),
+        project_id=project_id,
     )
     # F9: SSE 事件总线通知
     try:

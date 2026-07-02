@@ -169,6 +169,7 @@ def main():
                 "task_eval": task_eval,
                 "session_id": session_id,
                 "project_id": _get_project_id(),
+                "project_name": PROJECT_DIR.name,
             }
         ).encode("utf-8")
         req = urllib.request.Request(

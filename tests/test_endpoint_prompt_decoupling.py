@@ -69,11 +69,11 @@ class TestGetForEndpointDecoupling:
         )
         llm_cfg = LLMConfig(endpoints=[ep], active="my-ep")
 
-        # Mock config
+        # Mock get_config 返回修改后的配置
         cfg = MemoConfig.load()
         cfg.prompt = mgr
         cfg.llm = llm_cfg
-        monkeypatch.setattr(cfg_mod, "config", cfg, raising=False)
+        monkeypatch.setattr(cfg_mod, "get_config", lambda: cfg)
 
         t = mgr.get_for_endpoint("my-ep", template_type="extract")
         assert t is not None
@@ -92,7 +92,7 @@ class TestGetForEndpointDecoupling:
         cfg = MemoConfig.load()
         cfg.prompt = mgr
         cfg.llm = llm_cfg
-        monkeypatch.setattr(cfg_mod, "config", cfg, raising=False)
+        monkeypatch.setattr(cfg_mod, "get_config", lambda: cfg)
 
         t = mgr.get_for_endpoint("my-ep", template_type="extract")
         assert t is not None
@@ -108,7 +108,7 @@ class TestGetForEndpointDecoupling:
         cfg = MemoConfig.load()
         cfg.prompt = mgr
         cfg.llm = llm_cfg
-        monkeypatch.setattr(cfg_mod, "config", cfg, raising=False)
+        monkeypatch.setattr(cfg_mod, "get_config", lambda: cfg)
 
         t = mgr.get_for_endpoint("new-ep", template_type="extract")
         assert t is not None
@@ -140,7 +140,7 @@ class TestCrossEndpointTemplateSharing:
         cfg = MemoConfig.load()
         cfg.prompt = mgr
         cfg.llm = llm_cfg
-        monkeypatch.setattr(cfg_mod, "config", cfg, raising=False)
+        monkeypatch.setattr(cfg_mod, "get_config", lambda: cfg)
 
         t_a = mgr.get_for_endpoint("ep-a", template_type="extract")
         t_b = mgr.get_for_endpoint("ep-b", template_type="extract")
@@ -164,7 +164,7 @@ class TestBackwardCompatibility:
         cfg = MemoConfig.load()
         cfg.prompt = mgr
         cfg.llm = llm_cfg
-        monkeypatch.setattr(cfg_mod, "config", cfg, raising=False)
+        monkeypatch.setattr(cfg_mod, "get_config", lambda: cfg)
 
         # 不存在名为 old-ep 的模板 → fallback 到 default@extract
         t = mgr.get_for_endpoint("old-ep", template_type="extract")

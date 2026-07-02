@@ -222,6 +222,7 @@ def create_unified_app(collection_name: str = None) -> FastAPI:
         task_eval = body.get("task_eval")
         session_id = body.get("session_id", "")
         project_id = body.get("project_id", "")
+        project_name = body.get("project_name", "")
 
         if not task_eval:
             return JSONResponse({"error": "缺少 task_eval"}, status_code=400)
@@ -230,7 +231,7 @@ def create_unified_app(collection_name: str = None) -> FastAPI:
             if key not in task_eval:
                 task_eval[key] = []
 
-        _task_queue.enqueue(task_eval, session_id, project_id)
+        _task_queue.enqueue(task_eval, session_id, project_id, project_name)
         return JSONResponse({"status": "queued"}, status_code=200)
 
     logger.info("MEMOS Unified Server 初始化完成")

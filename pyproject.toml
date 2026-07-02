@@ -58,9 +58,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "isolated: 需要在独立环境中运行的测试（如 S06 数据迁移、S08 权限测试）",
-]
 
 [tool.ruff]
 target-version = "py312"

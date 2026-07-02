@@ -497,16 +497,25 @@ def batch_create_cards(request: Request, req: BatchCreateCardsRequest, project_i
         pid,
     )
 
+    # 类型感知的文档标签映射（与前端审核面板一致）
+    _doc_labels = {
+        'solution': ['问题', '方案', '洞察'],
+        'decision': ['背景', '决策', '理由'],
+        'process':  ['场景', '步骤', '备注'],
+        'lesson':   ['场景', '做法', '洞察'],
+    }
+
     for i, card in enumerate(req.cards):
         is_overwrite = False
-        # 拼接 document 内容
+        # 拼接 document 内容（按类型使用语义标签）
+        labels = _doc_labels.get(card.type, ['问题', '方案', '洞察'])
         parts = []
         if card.problem:
-            parts.append(f"[问题] {card.problem}")
+            parts.append(f"[{labels[0]}] {card.problem}")
         if card.solution:
-            parts.append(f"[方案] {card.solution}")
+            parts.append(f"[{labels[1]}] {card.solution}")
         if card.insight:
-            parts.append(f"[洞察] {card.insight}")
+            parts.append(f"[{labels[2]}] {card.insight}")
         content = "\n".join(parts) if parts else ""
         if not content:
             errors.append({"card": card.model_dump(), "reason": "内容为空"})

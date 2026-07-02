@@ -3,6 +3,7 @@
 生成时间固定为当地时区 23:00（时区硬编码 Asia/Shanghai）。
 """
 
+import json
 import logging
 import threading
 import time
@@ -73,7 +74,7 @@ class TtlForgetTask:
         default_expire = cfg.memory.ttl_default_expire_hours
 
         results = self.mem.store.get(
-            where={"$and": [{"status": "active"}]},
+            where={"status": "active"},
             include=["metadatas", "documents"],
             limit=cfg.memory.ttl_scan_batch_size,
         )
@@ -165,7 +166,12 @@ class SchedulerThread:
             time.sleep(60)
 
     def _check_and_generate(self):
-        """检查当前时间是否到达 23:00，且今日尚未生成。"""
+        """方案A v0.7.2: 发现活跃项目 → 按项目循环 → 最小数据量门禁。
+
+        1. TTL 遗忘 + 归档扫描（全局，不受项目影响）
+        2. 23:00 后，发现过去 48h 有活动记录的项目
+        3. 对每个项目：对话 < 3 轮 → 最小化简报；≥ 3 轮 → 完整简报管线
+        """
         now = self._now_in_tz()
 
         # F7: 每日执行 forgotten→archived 自动归档扫描（仅当天首次）
@@ -189,14 +195,32 @@ class SchedulerThread:
             return
 
         today = now.strftime("%Y-%m-%d")
-        if self._has_today_briefing(today):
-            logger.debug("今日(%s)已有简报，跳过", today)
+
+        if not self._generator:
             return
 
-        if self._generator:
-            self._generator()
-            logger.info("调度器: 简报已生成 (%s)", today)
-            # F9: SSE 事件总线通知
+        projects = self._discover_active_projects()
+        if not projects:
+            logger.info("调度器: 无活跃项目，跳过简报生成")
+            return
+
+        logger.info("调度器: 发现 %d 个活跃项目: %s", len(projects), projects)
+
+        for pid in projects:
+            if self._has_today_project_briefing(today, pid):
+                logger.debug("项目 %s 今日(%s)已有简报，跳过", pid, today)
+                continue
+
+            daily_rounds = self._count_today_rounds(pid)
+            if daily_rounds < 3:
+                logger.info("项目 %s 当日对话 %d 轮，未达 3 轮门槛，写入最小化简报", pid, daily_rounds)
+                self._write_minimal_briefing(pid, today, daily_rounds)
+                continue
+
+            self._generator(project_id=pid)
+            logger.info("调度器: 简报已生成 (%s, project=%s)", today, pid)
+
+            # F9: SSE 事件总线通知（简报级别，非项目级别）
             try:
                 from .event_bus import touch_event as _touch
 
@@ -242,21 +266,112 @@ class SchedulerThread:
         except Exception as e:
             logger.warning("调度器: 自动归档扫描异常: %s", e)
 
-    def _has_today_briefing(self, today: str) -> bool:
-        """检查今日是否已有 briefing 记录。
+    def _has_today_project_briefing(self, today: str, project_id: str) -> bool:
+        """检查指定项目今日是否已有简报（full 或 simple 均视为存在）。
 
-        注意：quality=simple（兜底）的简报不会阻止 quality=full（调度器）的自动生成。
-        此处仅检查 quality=full 的记录。
+        任何今日已存在的简报（包括最小化简报 quality=simple）
+        阻止重复生成，防止调度循环每 60s 重复写入。
         """
         if self._memory is None:
             return False
         try:
-            results = self._memory.list_memories(type_filter="briefing", limit=10)
+            results = self._memory.list_memories(
+                type_filter="briefing",
+                project_id=project_id,
+                limit=5,
+            )
             for item in results:
                 meta = item.get("metadata", {})
-                if meta.get("briefing_date") == today and meta.get("quality") == "full":
+                if meta.get("briefing_date") == today:
                     return True
             return False
         except Exception as e:
-            logger.warning("检查今日简报失败: %s", e)
+            logger.warning("检查项目简报失败: %s", e)
             return False
+
+    def _discover_active_projects(self) -> list[str]:
+        """发现过去 48h 内有活动记录的项目（从 ChromaDB metadata 提取）。"""
+        if self._memory is None:
+            return []
+        cutoff = time.time() - 172800  # 48h
+        try:
+            results = self._memory.store.get(
+                where={"timestamp": {"$gte": cutoff}},
+                include=["metadatas"],
+                limit=2000,
+            )
+            pids: set[str] = set()
+            for meta in results.get("metadatas", []):
+                pid = (meta or {}).get("project_id", "")
+                if pid:
+                    pids.add(pid)
+            return sorted(pids)
+        except Exception as e:
+            logger.warning("项目发现扫描失败: %s", e)
+            return []
+
+    def _count_today_rounds(self, project_id: str) -> int:
+        """统计指定项目今日对话记录数（仅 metadatas 快速路径）。"""
+        if self._memory is None:
+            return 0
+        now = self._now_in_tz()
+        today_start = datetime(now.year, now.month, now.day, tzinfo=now.tzinfo).timestamp()
+        today_end = now.timestamp()
+        try:
+            results = self._memory.store.get(
+                where={
+                    "$and": [
+                        {"project_id": project_id},
+                        {"type": {"$in": ["user_input", "assistant_output"]}},
+                        {"timestamp": {"$gte": today_start}},
+                    ]
+                },
+                include=["metadatas"],
+                limit=500,
+            )
+            count = 0
+            for meta in results.get("metadatas", []):
+                ts = (meta or {}).get("timestamp", 0)
+                if isinstance(ts, (int, float)) and today_start <= ts < today_end:
+                    count += 1
+            return count
+        except Exception as e:
+            logger.warning("统计对话轮次失败: %s", e)
+            return 0
+
+    def _write_minimal_briefing(self, project_id: str, today: str, rounds: int) -> None:
+        """低活跃项目最小化简报：直接写兜底文本，无 LLM 无数据管线。"""
+        briefing = {
+            "summary": f"今日对话极少（共 {rounds} 轮），跳过详细简报",
+            "task_status": "当前项目无活跃任务记录",
+            "key_events": [],
+            "new_knowledge": [],
+            "plan_tomorrow": "无",
+            "quality": "simple",
+            "source": "auto_extracted",
+            "session_count": 0,
+            "task_done_count": 0,
+            "task_todo_count": 0,
+            "new_knowledge_count": 0,
+        }
+        briefing_meta = {
+            "type": "briefing",
+            "briefing_date": today,
+            "source": "auto_extracted",
+            "quality": "simple",
+            "generated_at": time.time(),
+            "delivered": False,
+            "project_id": project_id,
+            "task_done_count": 0,
+            "task_todo_count": 0,
+            "new_knowledge_count": 0,
+            "session_count": 0,
+        }
+        try:
+            self._memory.remember(
+                json.dumps(briefing, ensure_ascii=False),
+                metadata=briefing_meta,
+            )
+            logger.info("调度器: 最小化简报已写入 (%s, project=%s, rounds=%d)", today, project_id, rounds)
+        except Exception as e:
+            logger.error("最小化简报写入失败: %s", e)

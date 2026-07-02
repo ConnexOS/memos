@@ -1,10 +1,4 @@
-# tests/test_unified/test_sse.py
-
 """测试 SSE MCP 挂载"""
-
-import os
-
-os.environ["MEMOS_AUTH_DISABLE"] = "true"
 
 import pytest
 

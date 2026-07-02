@@ -18,11 +18,14 @@ class MockStore:
         result = {"ids": [], "metadatas": [], "documents": []}
         for i, mid in enumerate(self.data["ids"]):
             meta = self.data["metadatas"][i] or {}
-            if where and "$and" in where:
-                conds = where["$and"]
-                match = all(
-                    meta.get(k) == v for cond in conds for k, v in cond.items()
-                )
+            if where:
+                if "$and" in where:
+                    conds = where["$and"]
+                    match = all(
+                        meta.get(k) == v for cond in conds for k, v in cond.items()
+                    )
+                else:
+                    match = all(meta.get(k) == v for k, v in where.items())
                 if not match:
                     continue
             result["ids"].append(mid)

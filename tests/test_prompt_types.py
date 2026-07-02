@@ -127,7 +127,9 @@ class TestEnsureDefaultTemplates:
         mgr = PromptManager()
         mgr.ensure_default_template()
         t = mgr.get("default@extract")
-        assert "TYPE CLASSIFICATION CRITERIA" in t.draft.system_prompt
+        assert t is not None
+        assert "solution" in t.draft.system_prompt
+        assert "decision" in t.draft.system_prompt
 
     def test_daily_review_default_uses_daily_prompt(self, temp_home):
         mgr = PromptManager()

@@ -119,23 +119,8 @@ _DEFAULT_SYSTEM_PROMPT = """You are a senior technical analyst. Your task is to 
 Now analyze the conversation below. Follow the extraction rules strictly. Output the JSON array."""
 
 
-_NEW_EXTRACT_SYSTEM_PROMPT = """请从以下对话中提取有价值的知识，归类为以下四种类型之一：
-- solution：问题+解决方案（对应报错→修复模式）
-- decision：技术选型/架构决策（有选项对比和理由）
-- lesson：经验教训（可概括的认知沉淀）
-- process：规范流程（可重复的操作步骤）
-
-输出 JSON 数组，每项包含：
-{
-  "type": "solution|decision|lesson|process",
-  "problem": "问题或背景描述",
-  "solution": "具体做法或知识内容",
-  "insight": "经验总结或最佳实践",
-  "quality_score": 0.0~1.0,
-  "quality_reason": "评分理由"
-}
-
-注意：type 只能取 solution、decision、lesson、process 之一，不得使用其他类型。"""
+# _NEW_EXTRACT_SYSTEM_PROMPT 已迁移至 prompts.py _get_default_extract_prompt()
+# 由 PromptManager 统一管理，不再硬编码为模块级常量。
 
 _DEFAULT_CONFLICT_PROMPT = """You are a fact-conflict detector. Given a new piece of information and a list of existing memories, determine if there is any factual contradiction.
 

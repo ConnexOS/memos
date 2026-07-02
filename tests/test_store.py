@@ -70,7 +70,7 @@ class TestStoreMemories:
         count = self.ext.store_memories(memories)
         assert count == 1
         call_args = fake_memory.remember.call_args
-        assert call_args[1]["metadata"]["type"] == "fact"
+        assert call_args[1]["metadata"]["type"] == "solution"
 
     def test_empty_memories_list(self):
         fake_memory = mock.Mock()

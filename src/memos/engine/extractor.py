@@ -204,9 +204,10 @@ class MemoryExtractor:
     def _get_prompt(self, endpoint_name: str = None, template_type: str = "extract"):
         """从 PromptManager 获取当前活跃端点对应的提示词模板（按类型查找）。
 
-        Fallback 使用 _NEW_EXTRACT_SYSTEM_PROMPT（含 quality_score 要求）。
+        Fallback 使用 PromptManager 的默认提取 prompt。
         """
-        from ..config import _NEW_EXTRACT_SYSTEM_PROMPT, PromptTemplate
+        from ..config import PromptTemplate
+        from ..config.prompts import _get_default_extract_prompt
 
         try:
             if endpoint_name is None:
@@ -218,8 +219,8 @@ class MemoryExtractor:
         except Exception as e:
             logger.warning("获取提示词模板失败: %s，使用内置默认", e)
 
-        # fallback: 内置精简提示词模板（v0.4.4 增强版: 含 quality_score 要求）
-        fallback = PromptTemplate(id="fallback", system_prompt_text=_NEW_EXTRACT_SYSTEM_PROMPT)
+        # fallback: 通过 PromptManager 获取默认提取 prompt
+        fallback = PromptTemplate(id="fallback", system_prompt_text=_get_default_extract_prompt())
         fallback._sync_from_legacy()
         return fallback
 

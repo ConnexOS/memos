@@ -1198,7 +1198,7 @@ class ContextMemory:
         """标记旧记忆为被新记忆覆盖。"""
         self.update_memory(
             old_id,
-            metadata={
+            new_metadata={
                 "status": "forgotten",
                 "inactive_reason": "superseded",
                 "superseded_by": new_id,

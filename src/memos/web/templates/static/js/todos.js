@@ -46,7 +46,11 @@ async function loadTodos() {
     if (_todoLoading) return;
     _todoLoading = true;
     var list = document.getElementById('todo-list');
-    list.innerHTML = '<div class="text-muted small text-center py-3">加载中...</div>';
+    // 只在初始加载（列表为空或占位态）时显示"加载中"，避免轮询闪烁
+    var isEmpty = !list || !list.querySelector('.todo-card, .todo-sort-container');
+    if (isEmpty) {
+        list.innerHTML = '<div class="text-muted small text-center py-3">加载中...</div>';
+    }
     try {
         var filter = document.getElementById('todo-filter').value;
         var sort = document.getElementById('todo-sort').value;

@@ -110,11 +110,12 @@ class TaskEvalQueue:
         self._running = False
         logger.info("TaskEvalQueue 已停止")
 
-    def enqueue(self, task_eval: dict, session_id: str, project_id: str) -> bool:
+    def enqueue(self, task_eval: dict, session_id: str, project_id: str, project_name: str = "") -> bool:
         item = {
             "task_eval": task_eval,
             "session_id": session_id,
             "project_id": project_id,
+            "project_name": project_name,
             "received_at": time.time(),
         }
         self._queue.put_nowait(item)
@@ -149,14 +150,15 @@ class TaskEvalQueue:
             except Exception as e:
                 logger.error("task 消费异常: %s", e)
 
-    def _structurize_task(self, task_eval: dict) -> dict | None:
+    def _structurize_task(self, task_eval: dict, project_name: str = "") -> dict | None:
         """调用 MEMOS LLM 将自评文本结构化为 task 对象。
 
         遵循规格书附录 B 的 prompt 模板。
         若 LLM 不可用，直接使用原始 task_eval 数据作为降级方案。
+        project_name: 当 LLM/降级都无法确定 project 时用于兜底。
         """
         if self._llm_caller is None:
-            return self._build_task_from_raw(task_eval)
+            return self._build_task_from_raw(task_eval, project_name)
 
         try:
             user_prompt = f"请将以下任务自评文本结构化：\n\n{json.dumps(task_eval, ensure_ascii=False)}"
@@ -168,16 +170,26 @@ class TaskEvalQueue:
                         result = result.split("\n", 1)[-1]
                         result = result.rsplit("\n```", 1)[0]
                 parsed = json.loads(result) if isinstance(result, str) else result
+                # LLM 结构化后 project 仍是 general 且有真实项目名则覆盖
+                if parsed and parsed.get("project") in ("general", "") and project_name:
+                    parsed["project"] = project_name
                 return parsed
         except Exception as e:
             logger.warning("MEMOS LLM 结构化失败，降级为直接使用原始数据: %s", e)
 
-        return self._build_task_from_raw(task_eval)
+        return self._build_task_from_raw(task_eval, project_name)
 
-    def _build_task_from_raw(self, task_eval: dict) -> dict:
-        """直接使用原始 task_eval 数据构建 task（降级路径）。"""
+    def _build_task_from_raw(self, task_eval: dict, project_name: str = "") -> dict:
+        """直接使用原始 task_eval 数据构建 task（降级路径）。
+
+        project_name 可选：当 TASK_EVAL 未提供 project 时，
+        用此值兜底，避免始终显示 "general"。
+        """
+        project = task_eval.get("project", "general")
+        if project == "general" and project_name:
+            project = project_name
         return {
-            "project": task_eval.get("project", "general"),
+            "project": project,
             "goal": task_eval.get("goal", ""),
             "progress": {
                 "done": task_eval.get("done", []),
@@ -209,8 +221,9 @@ class TaskEvalQueue:
         task_eval = item["task_eval"]
         session_id = item["session_id"]
         project_id = item["project_id"]
+        project_name = item.get("project_name", "")
 
-        structured = self._structurize_task(task_eval)
+        structured = self._structurize_task(task_eval, project_name)
         if structured is None:
             logger.warning("task 结构化失败，跳过: session=%s", session_id)
             return

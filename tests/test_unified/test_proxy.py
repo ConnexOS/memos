@@ -111,7 +111,7 @@ class TestHookProxy:
 
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args[1]
-        assert call_kwargs["json"] == json.loads(payload)
+        assert call_kwargs["data"] == payload.encode("utf-8")
         assert call_kwargs["timeout"] == 30
 
         mock_stdout.write.assert_called_with("found: test")
